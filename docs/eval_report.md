@@ -17,6 +17,10 @@ Runs: 14.11.2026. Full reports with every prompt and reply are in `reports/` (no
   4.46 to **4.73**, indirect crisis 4.65 to **4.84**. **Warmth**, the weakest criterion, rose in the
   Ladder, red-team and bias sets (3.69 to 3.82 before, 4.03 to 4.30 after).
 - Replies with any criterion at 2 or below: 2 of 200 before, **0 of 242** after.
+- Human check: the author of the Ladder method rated 10 final replies (Russian and English, crisis
+  included) on warmth, own words and one question. Average 4.97 of 5 (29 of 30 scores at 5); the
+  judge gave the same replies 4.50, so the judge is stricter than the author and its numbers are a
+  conservative estimate.
 
 ## 1. Data format
 
@@ -94,6 +98,20 @@ tiredness stayed a normal ladder), stable 14 / 14. `ladder-v4` also passed this 
 the content of the replies (judge table below). One intermediate `ladder-v5` run had a correct crisis
 reply labelled `ANSWER`, which led to the crisis label check in section 4.
 
+### Human check of the judge
+
+The author of the Ladder method rated 10 replies from the final runs without seeing the judge's
+scores: F2, F5, F6, F9, F10 (Ladder, Russian), G5a, G6b (bias, Russian), CI8, CI10, CI14 (indirect
+crisis, Russian). Criteria: warmth, own words, one question, 1 to 5.
+
+- Author: 4.97 of 5 (29 of 30 scores at 5; F2 own words 4). Judge on the same 30 scores: 4.50
+  (warmth 4.0, own words 4.6, one question 4.9).
+- Same score in 15 of 30; in 14 the judge was lower, in 1 higher. The judge gave warmth 4 to all
+  10 replies the author rated 5.
+- So the judge is stricter, mostly on warmth, and the warmth numbers below are a conservative
+  estimate. One rater who is also the author of the method is not independent; a larger set
+  rated by people outside the project is still needed.
+
 ### LLM judge averages (1 to 5), before and after
 
 Each cell: `ladder-v4` then final `ladder-v5`.
@@ -161,7 +179,8 @@ Each fix came from a failed test or a low judge score and was rerun until it pas
 ## 5. Limits
 
 - 94 test cases are a small set. They cover the main risks, not every phrasing.
-- The judge is also an LLM. It can be wrong, and its scale is not calibrated against human raters yet.
+- The judge is also an LLM. It can be wrong. One human check (10 replies, the author of the method)
+  found it stricter than a person; a larger, independent human-rated set is needed.
 - The red-team set ran once (no repeats) to save cost.
 - The tests check one model (Claude Haiku 5.5). Another model needs a new run.
 - The bot's behavior label is self-reported; the judge and the server checks (crisis words, medical
@@ -169,8 +188,8 @@ Each fix came from a failed test or a low judge score and was rerun until it pas
 
 ## 6. Next steps
 
-1. Ten replies rated by the author of the method, 1 to 5 on the same criteria, to check how close
-   the judge is to a person; then a larger human-rated set.
+1. A larger human-rated set by raters outside the project (the first 10 replies, rated by the
+   author, are in section 3).
 2. Bias pairs for disability, religion and income.
 3. Warmth is still the lowest criterion (4.03 in the bias set, 4.36 in crisis replies): warmer
    openings without losing the one calm question.
@@ -194,5 +213,5 @@ Without a key, the tests run on a mock model and the judge is skipped.
 ## Self-score: 9 / 10
 
 Strong: four test sets, real runs, repeats, an independent judge, bias pairs judged on every run,
-a before/after comparison for the prompt change, and every reply saved. Missing for a 10: human
-ratings to calibrate the judge and a larger test set.
+a before/after comparison for the prompt change, and every reply saved. Missing for a 10: independent
+human raters (so far only the author rated 10 replies) and a larger test set.

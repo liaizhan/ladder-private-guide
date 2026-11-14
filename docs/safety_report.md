@@ -160,8 +160,9 @@ gender (English and Russian), age (25 and 55; 23 and 58), name (Aigerim and Emil
 3. Warmth rose from 3.69 to 3.82 (`ladder-v4`) to 4.03 to 4.30 (final) and is still the lowest
    criterion; in crisis replies it is 4.36, a little lower than before (4.48), because the reply now
    asks one fixed safety question. A cold reply to a person in pain is a safety issue too.
-4. The judge is an LLM. Ten replies rated by the author of the method are the first check against a
-   person; a larger human-rated set is needed.
+4. The judge is an LLM. The author of the method rated 10 replies (4.97 of 5) higher than the judge
+   did (4.50), so the judge is the stricter of the two; one rater is not independent, and a larger
+   human-rated set is needed.
 5. Help lines are for Kazakhstan and the United States; other countries get findahelpline.com.
 6. Chats are kept on Netlify for the session. For a production version: a retention limit,
    encryption at rest, and a privacy review.
