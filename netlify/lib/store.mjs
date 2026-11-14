@@ -67,3 +67,11 @@ export function newSession(id) {
 // Only accept real UUIDs as ids (e.g. "3f2b6c1e-8d4a-4b7e-9c1d-2a5e6f7a8b9c").
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const isValidId = (id) => typeof id === "string" && UUID.test(id);
+
+// Erase one chat for good ("Delete chat" button, DELETE /api/session?id=...).
+// Privacy by design: the person, not us, decides how long their ladder is kept.
+export async function deleteSession(id) {
+  const store = await blobStore();
+  if (store) await store.delete(id);
+  else memory.delete(id);
+}

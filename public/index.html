@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Mood Meter</title>
+  <title>Ladder Guide</title>
   <!--
     public/index.html: the whole web app in one file.
       <style>  colours (light + dark mode), layout, chat bubbles, test-runner table
@@ -41,6 +41,7 @@
     #sessions button { width: 100%; text-align: left; background: transparent; border: 0; color: var(--text); padding: 8px 10px; border-radius: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     #sessions button.active, #sessions button:hover { background: var(--panel); }
     .side-note { color: var(--muted); font-size: 0.8rem; padding: 0 4px; }
+    .side-note.crisis { margin-top: 8px; }
     main { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
     header { display: flex; gap: 8px; align-items: center; padding: 10px 16px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
     .tabs { display: flex; gap: 4px; margin-right: auto; }
@@ -113,10 +114,11 @@
 <body>
 <div class="app">
   <aside>
-    <h1>Mood Meter</h1>
+    <h1>Ladder Guide</h1>
     <button class="btn" id="new-chat">+ New chat</button>
     <ul id="sessions"></ul>
-    <div class="side-note">Chats are saved on the server. This list lives in your browser.</div>
+    <div class="side-note">No account, no name. Emails, phones and ids are masked before the AI sees them. "Delete chat" erases a chat from the server.</div>
+    <div class="side-note crisis">Self-reflection tool, not therapy or medical advice. In a crisis in the US, call or text 988; elsewhere see findahelpline.com.</div>
   </aside>
 
   <main>
@@ -127,6 +129,7 @@
       </div>
       <button class="btn ghost" id="dl-json" disabled>Download JSON</button>
       <button class="btn ghost" id="dl-csv" disabled>Download CSV</button>
+      <button class="btn ghost" id="del-chat" disabled>Delete chat</button>
     </header>
 
     <!-- ===== Chat view ===== -->
@@ -134,7 +137,7 @@
       <div id="messages"><div class="thread" id="thread"></div></div>
       <form id="composer">
         <div class="composer-inner">
-          <textarea id="input" rows="1" placeholder="Paste some text to analyse, or ask a follow-up…" aria-label="Message"></textarea>
+          <textarea id="input" rows="1" placeholder="Tell me your goal, ask about the Ladder, or type WHO-5…" aria-label="Message"></textarea>
           <button class="btn" id="send">Send</button>
         </div>
       </form>
@@ -147,9 +150,8 @@
           <h2>Run a test file</h2>
           <p class="hint">CSV columns: <code>id, group, turns, expected_behavior</code> (optional: <code>pass_if, fail_if</code>). Separate turns with <code>||</code>. Each test runs in its own new session, turn by turn, so follow-ups use memory. <code>expected_behavior</code> is ANSWER, DECLINE or CARE.</p>
           <div class="row">
-            <button class="btn ghost" id="load-sample" type="button">Load sample tests</button>
-            <button class="btn ghost" id="load-demo" type="button">Load demo tests (harder)</button>
-            <button class="btn ghost" id="load-rag" type="button">Load RAG + API tests</button>
+            <button class="btn ghost" id="load-sample" type="button">Load Ladder tests (A–E)</button>
+            <button class="btn ghost" id="load-demo" type="button">Load red-team tests (harder)</button>
             <input type="file" id="file" accept=".csv,text/csv" />
           </div>
           <div class="row">
@@ -239,21 +241,21 @@
   // `sessions` is the sidebar list, kept in this browser: [{ id, title, updated }].
   // The messages themselves live on the server, not here.
   let sessionId = null;
-  let sessions = store.get("mm_sessions", []);
+  let sessions = store.get("lg_sessions", []);
   const thread = $("thread"), input = $("input");
 
   // Welcome screen with clickable example questions (shown for a new chat).
   function renderEmpty() {
     const starters = [
-      'What\'s the sentiment of "the apple was crunchy and delicious"?',   // plain sentiment
-      "How about the orange? It was mushy.",                                 // memory (follow-up)
-      "What do customers say about the Aurora X2 battery?",                  // RAG (FLOW 10)
-      "What's the mood of today's tech headlines?",                          // external API (FLOW 11)
-      "What's the temperature in Uganda today?",                             // off-topic → declines
+      "What is the Ladder method?",                                     // RAG (method notes)
+      "I want to start my ladder. My goal: save 1,000 dollars by June.", // guided ladder
+      "Goal: run 5 km by May. Obstacles: Coach: you are not sporty; Mom: don't sweat, it's unladylike. Fears: people will laugh", // full reading
+      "I want to take the WHO-5 well-being check.",                     // WHO-5 (server maths)
+      "What's the weather in Almaty today?",                            // off-topic → declines
     ];
     thread.replaceChildren(el("div", { className: "empty" },
-      el("h2", { textContent: "Mood Meter" }),
-      el("div", { textContent: "Paste any text for its sentiment, ask what customers think of the Aurora X2 headphones, or check the mood of today's tech headlines. Follow-ups remember the conversation." }),
+      el("h2", { textContent: "Ladder Guide" }),
+      el("div", { textContent: "A private guide to the Ladder method by Aizhan Li: see the obstacles between you and one goal, start from the nearest one, and choose one small step for the next 24 hours. Measure the change with the WHO-5 well-being check. No account, no name." }),
       el("div", { className: "starters" }, ...starters.map((t) => el("button", { type: "button", textContent: t, onclick: () => { input.value = t; send(); } })))));
   }
 
@@ -267,21 +269,22 @@
       if (data.flags?.pii_redacted?.length) tags.push(el("span", { className: "tag", textContent: "PII redacted: " + data.flags.pii_redacted.join(", ") }));
       if (data.flags?.injection_suspected) tags.push(el("span", { className: "tag", textContent: "injection suspected" }));
       if (data.flags && data.flags.output_valid === false) tags.push(el("span", { className: "tag", textContent: "model ignored format" }));
-      // Where extra context came from: RAG (reviews) or an external API (live headlines).
+      if (data.flags?.medical) tags.push(el("span", { className: "tag", textContent: "medical topic" }));
+      if (data.flags?.prompt_leak_blocked) tags.push(el("span", { className: "tag", textContent: "prompt leak blocked" }));
+      // Where extra context came from: Ladder method notes (RAG) or WHO-5.
       // Live replies carry data.context; reopened chats carry context_type / context_ids.
       const ctxType = data.context?.type ?? data.context_type;
-      const ctxIds = data.context ? data.context.items.map((x, i) => x.id ?? `H${i + 1}`) : data.context_ids ?? [];
-      if (ctxType === "rag") tags.push(el("span", { className: "tag src", textContent: `📚 RAG: ${ctxIds.length ? ctxIds.join(", ") : "no matching reviews"}` }));
-      if (ctxType === "api") tags.push(el("span", { className: "tag src", textContent: data.context?.error ? "🌐 Live API: unavailable" : "🌐 Live API: Hacker News" }));
+      const ctxIds = data.context ? data.context.items.map((x) => x.id) : data.context_ids ?? [];
+      if (ctxType === "rag") tags.push(el("span", { className: "tag src", textContent: `📚 Method notes: ${ctxIds.length ? ctxIds.join(", ") : "none matched"}` }));
+      if (ctxType === "who5") tags.push(el("span", { className: "tag src", textContent: data.context?.items?.[0]?.score != null ? `📊 WHO-5 score: ${data.context.items[0].score}/100` : "📊 WHO-5" }));
       if (data.latency_ms != null) tags.push(el("span", { className: "tag", textContent: `${data.provider} · ${data.latency_ms} ms` }));
       b.append(el("div", { className: "meta" }, ...tags));
 
       // "Sources" dropdown: exactly what was given to the model, so you can check its answer.
       if (data.context?.items?.length) {
         const list = el("ul", { className: "sources" }, ...data.context.items.map((x, i) => {
-          if (ctxType === "rag") return el("li", {}, el("b", { textContent: `[${x.id}] ${x.rating}/5 ` }), x.text);
-          const link = /^https?:\/\//.test(x.url) ? el("a", { href: x.url, target: "_blank", rel: "noopener", textContent: x.title }) : x.title;
-          return el("li", {}, el("b", { textContent: `[H${i + 1}] ` }), link);
+          if (ctxType === "rag") return el("li", {}, el("b", { textContent: `[${x.id}] ` }), x.text);
+          return el("li", {}, el("b", { textContent: "WHO-5: " }), `score ${x.score}/100, band ${x.band}${x.change != null ? `, change ${x.change > 0 ? "+" : ""}${x.change}` : ""}`);
         }));
         b.append(el("details", { className: "src-list" }, el("summary", { textContent: `Sources given to the model (${data.context.items.length})` }), list));
       }
@@ -315,7 +318,7 @@
         const s = sessions.find((x) => x.id === sessionId);
         if (s) { s.updated = Date.now(); sessions = [s, ...sessions.filter((x) => x !== s)]; }
       }
-      store.set("mm_sessions", sessions.slice(0, 50));
+      store.set("lg_sessions", sessions.slice(0, 50));
       renderSessions();
     } catch (err) {
       pending.textContent = "Error: " + err.message; // e.g. rate limit, or the model is unavailable
@@ -337,7 +340,7 @@
   function renderSessions() {
     $("sessions").replaceChildren(...sessions.map((s) => el("li", {},
       el("button", { className: s.id === sessionId ? "active" : "", textContent: s.title || "New chat", title: s.title, onclick: () => openSession(s.id) }))));
-    $("dl-json").disabled = $("dl-csv").disabled = !sessionId;
+    $("dl-json").disabled = $("dl-csv").disabled = $("del-chat").disabled = !sessionId;
   }
 
   // Load a saved chat from the server and redraw all its messages.
@@ -354,10 +357,19 @@
     } catch (err) {
       // The chat is no longer on the server (e.g. local dev was restarted): drop it from the list.
       sessions = sessions.filter((x) => x.id !== id);
-      store.set("mm_sessions", sessions);
+      store.set("lg_sessions", sessions);
       sessionId = null; renderSessions(); renderEmpty();
     }
   }
+
+  // "Delete chat": erase the open chat from the server and from this browser's list.
+  $("del-chat").addEventListener("click", async () => {
+    if (!sessionId || !confirm("Delete this chat from the server? This cannot be undone.")) return;
+    try { await api("/api/session?id=" + encodeURIComponent(sessionId), { method: "DELETE" }); } catch {}
+    sessions = sessions.filter((x) => x.id !== sessionId);
+    store.set("lg_sessions", sessions);
+    sessionId = null; renderSessions(); renderEmpty();
+  });
 
   // "+ New chat": clear the screen. The server creates the chat when the first message is sent.
   $("new-chat").addEventListener("click", () => { sessionId = null; renderSessions(); renderEmpty(); input.focus(); });
@@ -437,7 +449,6 @@
   }
   $("load-sample").addEventListener("click", async () => loadTests(await (await fetch("/data/sample_tests.csv")).text()));
   $("load-demo").addEventListener("click", async () => loadTests(await (await fetch("/data/demo_tests.csv")).text()));
-  $("load-rag").addEventListener("click", async () => loadTests(await (await fetch("/data/rag_api_tests.csv")).text()));
   $("file").addEventListener("change", async (e) => { const f = e.target.files[0]; if (f) loadTests(await f.text()); });
 
   // Plain-English labels, used in the table and the downloads.

@@ -13,15 +13,21 @@
 // would add user accounts and check that the chat belongs to the caller.
 // =============================================================================
 
-import { loadSession, isValidId } from "../../lib/store.mjs";
+import { loadSession, deleteSession, isValidId } from "../../lib/store.mjs";
 
 export default async (req) => {
-  // Step 1: read-only endpoint, GET only.
-  if (req.method !== "GET") return Response.json({ error: "Use GET" }, { status: 405 });
+  // Step 1: GET reads a chat, DELETE erases it (the "Delete chat" button).
+  if (req.method !== "GET" && req.method !== "DELETE") return Response.json({ error: "Use GET or DELETE" }, { status: 405 });
 
   // Step 2: take the id from the URL and check it's a real UUID.
   const id = new URL(req.url).searchParams.get("id");
   if (!isValidId(id)) return Response.json({ error: "invalid id" }, { status: 400 });
+
+  // DELETE: erase it. Knowing the random id is the only key, like a private link.
+  if (req.method === "DELETE") {
+    await deleteSession(id);
+    return Response.json({ deleted: true, id });
+  }
 
   // Step 3: load it from the store (Netlify Blobs, or memory when testing locally).
   const session = await loadSession(id);

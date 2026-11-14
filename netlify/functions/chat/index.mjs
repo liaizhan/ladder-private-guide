@@ -17,10 +17,10 @@
 //   5  Stop if the chat is too long
 //   6  Mask personal data, and flag injection / distress
 //   7a Add extra context if the question needs it:
-//        RAG (matching product reviews, FLOW 10) or live data from an external API (FLOW 11)
+//        WHO-5 questions or a server-computed WHO-5 score, or RAG (Ladder method notes)
 //   7  Build the conversation history the model will see (this is the "memory")
 //   8  Call the model and check its answer format
-//   9  Force a caring reply if distress was detected
+//   9  Force a caring reply if a crisis was detected; replace a reply that leaks the prompt
 //   10 Remove personal data from the reply
 //   11 Save both messages to the session
 //   12 Return the reply, and log (without message text)
@@ -28,12 +28,12 @@
 
 import { loadSession, saveSession, newSession, isValidId, storageKind } from "../../lib/store.mjs";
 import {
-  validateMessage, redactPII, looksLikeInjection, showsDistress, parseModelOutput,
-  SUPPORT_LINE, MAX_TURNS_PER_SESSION, HISTORY_TURNS_SENT,
+  validateMessage, redactPII, looksLikeInjection, showsDistress, mentionsMedical, parseModelOutput,
+  leaksPrompt, LEAK_REPLACEMENT, SUPPORT_LINE, MAX_TURNS_PER_SESSION, HISTORY_TURNS_SENT,
 } from "../../lib/checks.mjs";
 import { callLLM, provider, modelName, env, PROMPT_VERSION } from "../../lib/llm.mjs";
-import { retrieve, wantsReviews, formatReviews } from "../../lib/rag.mjs";
-import { wantsNews, fetchTopHeadlines, formatHeadlines, NEWS_UNAVAILABLE } from "../../lib/external.mjs";
+import { retrieve, wantsMethod, formatMethod } from "../../lib/rag.mjs";
+import { who5Intent, formatQuestions, scoreWho5, formatResult } from "../../lib/who5.mjs";
 
 // -----------------------------------------------------------------------------
 // Rate limiter used in step 3.
@@ -112,38 +112,40 @@ export default async (req, context) => {
     pii_redacted: redacted.found,                     // e.g. ["email", "phone"]
     injection_suspected: looksLikeInjection(input.text), // flagged, NOT blocked
     distress: showsDistress(input.text),                // triggers step 9
+    medical: mentionsMedical(input.text),                // flagged; the prompt declines medical questions
     output_valid: true,                                  // updated in step 8
   };
 
-  // ---- Step 7a: add extra context (RAG or external API) --------------------------
+  // ---- Step 7a: add extra context (WHO-5 or RAG) -----------------------------------
   // A simple "router" decides whether this question needs outside information:
-  //   - asks for current headlines        → call the Hacker News API (external.mjs)
-  //   - asks about the product / reviews  → retrieve matching reviews (rag.mjs)
-  //     (also for short follow-ups like "and the price?" right after a review answer)
-  //   - otherwise                         → no extra context
+  //   - asks for the WHO-5 check            → the 5 official questions (who5.mjs)
+  //   - answers WHO-5 with five numbers     → the SERVER computes the score (exact maths),
+  //                                           compared with an earlier score in this chat
+  //   - asks about the method / privacy / limits, or a short follow-up to that
+  //                                         → retrieve matching method notes (rag.mjs)
+  //   - otherwise                           → no extra context
   // The extra context is put IN FRONT of the user's message for the model only.
   // It is not saved in the chat history; only which sources were used is saved.
-  let extra = null;        // { type: "rag" | "api", source, items: [...] }, returned to the browser
+  let extra = null;        // { type: "who5" | "rag", source, items: [...] }, returned to the browser
   let contextText = "";    // the text block the model sees
   const lastBot = [...session.messages].reverse().find((m) => m.role === "assistant");
+  const who5 = flags.distress ? null : who5Intent(redacted.text, lastBot?.content ?? "");
 
-  if (wantsNews(redacted.text)) {
-    try {
-      const items = await fetchTopHeadlines(5);
-      extra = { type: "api", source: "Hacker News API", items };
-      contextText = formatHeadlines(items);
-    } catch (err) {
-      // The API is down or slow: keep chatting, and tell the model so it can say so.
-      console.error(JSON.stringify({ event: "external_api_error", message: String(err.message).slice(0, 200) }));
-      extra = { type: "api", source: "Hacker News API", items: [], error: "unavailable" };
-      contextText = NEWS_UNAVAILABLE;
-    }
-  } else if (wantsReviews(redacted.text, lastBot?.context_type)) {
-    const hits = retrieve(redacted.text); // top matching reviews, best first
-    extra = { type: "rag", source: "Aurora X2 reviews", items: hits };
+  if (who5?.type === "who5-result") {
+    const previous = session.who5?.at(-1)?.score ?? null;
+    const result = scoreWho5(who5.scores, previous);
+    session.who5 = [...(session.who5 ?? []), { score: result.score, ts: new Date().toISOString() }];
+    extra = { type: "who5", source: "WHO-5 score (computed on the server)", items: [{ id: "WHO5", score: result.score, band: result.band, change: result.change }] };
+    contextText = formatResult(result);
+  } else if (who5?.type === "who5-questions") {
+    extra = { type: "who5", source: "WHO-5 questions", items: [] };
+    contextText = formatQuestions();
+  } else if (wantsMethod(redacted.text, lastBot?.context_type)) {
+    const hits = retrieve(redacted.text); // top matching notes, best first
+    extra = { type: "rag", source: "Ladder method notes", items: hits };
     contextText = hits.length
-      ? formatReviews(hits)
-      : "REFERENCE REVIEWS: no reviews matched this question. Say the reviews don't cover it; don't guess.";
+      ? formatMethod(hits)
+      : "METHOD NOTES: no notes matched this question. Say the notes don't cover it; don't guess.";
   }
 
   // ---- Step 7: build the conversation history (the "memory") ----------------
@@ -176,12 +178,15 @@ export default async (req, context) => {
     return Response.json({ error: "The assistant is unavailable right now. Please try again." }, { status: 502 });
   }
 
-  // ---- Step 9: distress always gets support resources ------------------------
+  // ---- Step 9: a crisis always gets help lines ---------------------------------
   // A safety net that doesn't depend on the model getting it right.
   if (flags.distress) {
     behavior = "CARE";
     if (!reply.includes("988")) reply = `${reply} ${SUPPORT_LINE}`.trim();
   }
+  // ---- Step 9b: never leak the instructions --------------------------------------
+  flags.prompt_leak_blocked = leaksPrompt(reply);
+  if (flags.prompt_leak_blocked) { behavior = "DECLINE"; reply = LEAK_REPLACEMENT; }
 
   // ---- Step 10: never echo personal data back --------------------------------
   reply = redactPII(reply).text;
@@ -193,7 +198,7 @@ export default async (req, context) => {
     role: "assistant", content: reply, behavior, ts: new Date().toISOString(),
     // Remember which sources were used, so follow-ups can reuse RAG (step 7a)
     // and reopened chats can show the source tags.
-    ...(extra && { context_type: extra.type, context_source: extra.source, context_ids: extra.items.map((x, i) => x.id ?? `H${i + 1}`) }),
+    ...(extra && { context_type: extra.type, context_source: extra.source, context_ids: extra.items.map((x) => x.id) }),
   });
   if (!session.title) session.title = redacted.text.slice(0, 60);
   await saveSession(session);
@@ -205,7 +210,7 @@ export default async (req, context) => {
     behavior,                 // ANSWER | DECLINE | CARE (used by the test runner)
     reply,                    // what the user sees
     flags,
-    context: extra,         // which reviews / headlines were given to the model (null if none)
+    context: extra,           // which method notes / WHO-5 data were given to the model (null if none)
     provider: provider(),     // anthropic | openai | mock
     model: modelName(),
     prompt_version: PROMPT_VERSION,
