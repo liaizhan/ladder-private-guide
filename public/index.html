@@ -104,6 +104,34 @@
     .verdict.none { color: var(--muted); background: var(--bg); border: 1px solid var(--border); }
     .why { margin-top: 6px; font-size: 0.78rem; color: var(--muted); max-width: 220px; }
     code { font-size: 0.85em; }
+    /* The person's ladder, drawn next to the chat (Flow 12) */
+    .chat-body { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 300px; }
+    .chat-body > * { min-width: 0; min-height: 0; }
+    #ladder-panel { border-left: 1px solid var(--border); background: var(--side); overflow-y: auto; padding: 16px 14px; display: flex; flex-direction: column; gap: 12px; }
+    #ladder-panel h3 { margin: 0; font-size: 0.95rem; }
+    .lp-hint { color: var(--muted); font-size: 0.82rem; margin: 0; }
+    .lp-fears { display: flex; flex-direction: column; gap: 4px; }
+    .lp-fear { font-size: 0.8rem; color: var(--warn); background: var(--warn-bg); border-radius: 8px; padding: 4px 8px; }
+    .lp-goal { background: var(--accent); color: #fff; border-radius: 10px; padding: 8px 10px; font-weight: 600; font-size: 0.88rem; }
+    .lp-ladder { position: relative; display: flex; flex-direction: column; padding: 0 12px; }
+    .lp-ladder::before, .lp-ladder::after { content: ""; position: absolute; top: -6px; bottom: -6px; width: 4px; border-radius: 2px; background: var(--muted); opacity: 0.45; }
+    .lp-ladder::before { left: 2px; } .lp-ladder::after { right: 2px; }
+    .lp-rung { position: relative; padding: 9px 8px 7px; font-size: 0.84rem; border-bottom: 4px solid color-mix(in srgb, var(--muted) 45%, transparent); }
+    .lp-rung.first { background: var(--ok-bg); border-radius: 6px 6px 0 0; }
+    .lp-rung small { display: block; color: var(--ok); font-weight: 700; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.03em; }
+    .lp-rung.empty { color: var(--muted); font-style: italic; }
+    .lp-me { border: 2px solid var(--accent); border-radius: 10px; padding: 7px 10px; font-size: 0.86rem; }
+    .lp-me b, .lp-goal b { margin-right: 6px; }
+    .lp-card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; font-size: 0.85rem; display: grid; gap: 6px; }
+    .lp-card .label { color: var(--muted); font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; }
+    .lp-done { margin: 0; padding-left: 18px; color: var(--ok); }
+    .lp-who5 { font-size: 1.15rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+    .lp-who5 .up { color: var(--ok); } .lp-who5 .down { color: var(--bad); }
+    @media (max-width: 1000px) {
+      .chat-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+      #ladder-panel { order: -1; border-left: 0; border-bottom: 1px solid var(--border); max-height: 34vh; }
+      #ladder-panel.is-empty { display: none; }
+    }
     @media (max-width: 760px) {
       .app { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
       header .btn.ghost { padding: 6px 10px; font-size: 0.85rem; }
@@ -134,7 +162,10 @@
 
     <!-- ===== Chat view ===== -->
     <section class="view on" id="view-chat">
-      <div id="messages"><div class="thread" id="thread"></div></div>
+      <div class="chat-body">
+        <div id="messages"><div class="thread" id="thread"></div></div>
+        <aside id="ladder-panel" aria-label="Your ladder" aria-live="polite"></aside>
+      </div>
       <form id="composer">
         <div class="composer-inner">
           <textarea id="input" rows="1" placeholder="Tell me your goal, ask about the Ladder, or type WHO-5…" aria-label="Message"></textarea>
@@ -223,8 +254,9 @@
   }
 
   // Send one chat message. session_id = null starts a new chat.
-  const sendMessage = (session_id, message) =>
-    api("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ session_id, message }) });
+  // extra = { check_in: true } for the "I'm back" button.
+  const sendMessage = (session_id, message, extra = {}) =>
+    api("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ session_id, message, ...extra }) });
 
   // ---------------------------------------------------------------------------
   // B. Tabs: switch between "Chat" and "Test runner"
@@ -246,6 +278,7 @@
 
   // Welcome screen with clickable example questions (shown for a new chat).
   function renderEmpty() {
+    renderLadder(null, []);
     const starters = [
       "What is the Ladder method?",                                     // RAG (method notes)
       "I want to start my ladder. My goal: save 1,000 dollars by June.", // guided ladder
@@ -294,13 +327,56 @@
     return b;
   }
 
+  // The ladder panel (Flow 12). Drawn from data the server keeps for this chat:
+  //   fears (above the goal) · goal · obstacles as rungs, nearest at the bottom · "I"
+  //   the 24-hour step with an "I'm back" button · steps done · WHO-5 before → after
+  function renderLadder(l, who5 = []) {
+    const panel = $("ladder-panel");
+    const has = l && (l.goal || l.me || l.obstacles?.length || l.step || l.done_steps?.length);
+    panel.classList.toggle("is-empty", !has && !who5?.length);
+    const kids = [el("h3", { textContent: "Your ladder" })];
+    if (!has) kids.push(el("p", { className: "lp-hint", textContent: "As you answer, your ladder is drawn here: the goal on top, the obstacles as rungs, you at the bottom. Work starts from the nearest rung." }));
+    if (has) {
+      if (l.fears?.length) kids.push(el("div", { className: "lp-fears" }, ...l.fears.map((f) => el("div", { className: "lp-fear", textContent: "Fear: " + f }))));
+      kids.push(el("div", { className: "lp-goal" }, el("b", { textContent: "Goal" }), l.goal || "not set yet"));
+      const rungs = (l.obstacles ?? []).map((o, i) => el("div", { className: "lp-rung" + (i === 0 ? " first" : "") },
+        ...(i === 0 ? [el("small", { textContent: "Nearest: start here" })] : []), o)).reverse(); // nearest is drawn lowest
+      kids.push(el("div", { className: "lp-ladder" }, ...(rungs.length ? rungs : [el("div", { className: "lp-rung empty", textContent: "obstacles appear here" })])));
+      kids.push(el("div", { className: "lp-me" }, el("b", { textContent: "I" }), l.me || "where you are now"));
+    }
+    if (l?.step) {
+      const h = l.step_ts ? Math.floor((Date.now() - Date.parse(l.step_ts)) / 3_600_000) : 0;
+      kids.push(el("div", { className: "lp-card" },
+        el("span", { className: "label", textContent: "Your step for the next 24 hours" }),
+        el("span", { textContent: l.step }),
+        el("span", { className: "lp-hint", textContent: h >= 24 ? `Agreed ${h} hours ago. Time to check in.` : `Agreed ${h ? h + " hour(s)" : "just now"}. Come back within 24 hours.` }),
+        el("button", { className: "btn" + (h >= 24 ? "" : " ghost"), type: "button", textContent: "I'm back: tell how it went",
+          onclick: () => { input.value = "I'm back. Here is how my step went."; send({ check_in: true }); } })));
+    }
+    if (l?.done_steps?.length) kids.push(el("div", { className: "lp-card" },
+      el("span", { className: "label", textContent: `Steps done (${l.done_steps.length})` }),
+      el("ul", { className: "lp-done" }, ...l.done_steps.map((x) => el("li", { textContent: x })))));
+    if (who5?.length) {
+      const first = who5[0].score, last = who5.at(-1).score, diff = last - first;
+      const line = el("div", { className: "lp-who5" }, String(first));
+      if (who5.length > 1) line.append(" → ", String(last), " ", el("span", { className: diff >= 0 ? "up" : "down", textContent: `(${diff > 0 ? "+" : ""}${diff})` }));
+      kids.push(el("div", { className: "lp-card" },
+        el("span", { className: "label", textContent: who5.length > 1 ? "WHO-5 well-being: before → now" : "WHO-5 well-being: before" }),
+        line,
+        el("span", { className: "lp-hint", textContent: who5.length > 1
+          ? (Math.abs(diff) >= 10 ? "A change of 10 points or more is meaningful." : "Less than 10 points: not a meaningful change yet.")
+          : "Out of 100. Retake it after 7 days: type WHO-5." })));
+    }
+    panel.replaceChildren(...kids);
+  }
+
   // FLOW 1, browser side:
   //   1 show the user's message and a "…" placeholder
   //   2 POST it to /api/chat with the current sessionId (null for a new chat)
   //   3 replace the placeholder with the reply
   //   4 first message of a new chat? remember the session_id the server returned,
   //     and add the chat to the sidebar list (saved in localStorage)
-  async function send() {
+  async function send(extra = {}) {
     const text = input.value.trim();
     if (!text) return;
     input.value = "";
@@ -308,9 +384,10 @@
     addBubble("user", text);                         // 1
     const pending = addBubble("assistant", "…");
     try {
-      const d = await sendMessage(sessionId, text);  // 2
+      const d = await sendMessage(sessionId, text, extra); // 2
       pending.remove();
       addBubble("assistant", d.reply, d);            // 3
+      renderLadder(d.ladder, d.who5);                // the ladder panel (Flow 12)
       if (!sessionId) {                              // 4: a new chat was created on the server
         sessionId = d.session_id;
         sessions.unshift({ id: sessionId, title: text.slice(0, 60), updated: Date.now() });
@@ -354,6 +431,7 @@
       thread.replaceChildren();
       for (const m of s.messages) addBubble(m.role, m.content, m.role === "assistant" ? { behavior: m.behavior, context_type: m.context_type, context_ids: m.context_ids } : null);
       if (!s.messages.length) renderEmpty();
+      renderLadder(s.ladder, s.who5);
     } catch (err) {
       // The chat is no longer on the server (e.g. local dev was restarted): drop it from the list.
       sessions = sessions.filter((x) => x.id !== id);

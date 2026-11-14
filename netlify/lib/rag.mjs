@@ -37,8 +37,21 @@ const SYNONYMS = {
   author: "created", founder: "created", invented: "created", who: "created",
   crisis: "crisis", emergency: "crisis", hotline: "crisis",
 };
+// Russian and Kazakh questions are matched to the English notes by word stems:
+// "препятствие" → obstacle, "мақсат" → goal. Other Cyrillic words are dropped.
+const RU_KK_STEMS = [
+  [/^(лестниц|баспалда)/, "ladder"], [/^(метод|әдіст)/, "method"],
+  [/^(препятств|преград|кедерг|убеждени)/, "obstacle"], [/^(страх|бою|опаса|қорқ|үрей)/, "fear"],
+  [/^(цел[ьию]|мечт|мақсат|арман)/, "goal"], [/^(ближайш|первы|начат|жақын|бірінші)/, "nearest"],
+  [/^(конфиденц|данн|удал|хран|аноним|дерек|құпия|сақта)/, "privacy"],
+  [/^(воз-?5|самочувств|әл-ауқат|прогресс)/, "who5"],
+  [/^(терап|психолог|врач|диагноз|дәрігер)/, "limits"], [/^(автор|айжан|создал|авторы)/, "created"],
+  [/^(кризис|дағдарыс|помощ)/, "crisis"],
+];
+const fromCyrillic = (w) => RU_KK_STEMS.find(([re]) => re.test(w))?.[1] ?? "";
 const tokenize = (s) =>
-  (s.toLowerCase().match(/[a-z0-9]+/g) ?? [])
+  (s.toLowerCase().match(/[a-z0-9]+|[а-яёәғқңөұүһі][а-яёәғқңөұүһі0-9-]*/g) ?? [])
+    .map((w) => (/^[a-z0-9]/.test(w) ? w : fromCyrillic(w)))
     .map((w) => SYNONYMS[w] ?? w)
     .map((w) => (w.length > 4 ? w.replace(/(able|ing|ed|es|s)$/, "") : w)) // crude "stemming": reviews→review
     .map((w) => SYNONYMS[w] ?? w)
@@ -78,8 +91,10 @@ export function retrieve(question, k = TOP_K) {
 const ABOUT_METHOD = /\b(ladder|method|methodology|how (does|do) (this|it|you) work|what (is|are) (an? )?(obstacles?|fears?|goals?|the 'i'|the i point|this)|obstacles?|fears? above|nearest|who-?5|well-?being (index|score)|privacy|limits?|limitations|my data|delete|stored|anonymous|not therapy|are you (a )?(therapist|psychologist|doctor|human)|who (made|created|built) (you|this|the ladder)|author|aizhan)\b/i;
 const FOLLOW_UP = /^(and|what about|how about|ok|okay|also|why|so|then)\b/i;
 
+const ABOUT_METHOD_RU_KK = /(лестниц|баспалдақ|методик|әдістеме|препятстви|ближайш|конфиденциальн|мои данные|удалить|воз-?5|самочувстви|(ты|вы) (психолог|терапевт|врач|человек)|кто (создал|автор)|айжан|как (это|ты) работа|кедергі|мақсат деген)/i;
+
 export function wantsMethod(message, previousContextType) {
-  if (ABOUT_METHOD.test(message)) return true;
+  if (ABOUT_METHOD.test(message) || ABOUT_METHOD_RU_KK.test(message)) return true;
   return previousContextType === "rag" && (FOLLOW_UP.test(message.trim()) || message.length < 40);
 }
 

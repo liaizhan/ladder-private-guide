@@ -14,14 +14,18 @@ Many people know what they want but keep postponing it. Often the brake is a sen
 - **Reads a finished ladder:** quotes your own words, names the nearest obstacle (work starts there), counts the fears, asks two reflection questions ("Whose voice do you hear in it?", "What would you do in the next 24 hours if you stopped believing it?") and helps you name one small step.
 - **Explains the method from its own notes (RAG):** 13 short method notes, retrieved with BM25 and cited like [M4]. It does not invent features, studies or statistics.
 - **Measures change with WHO-5:** the public, validated WHO-5 Well-Being Index. The server computes the score (0 to 100) and the change since the last check, so the model never does the maths. At 50 or below it suggests talking to a doctor or mental health professional: a screening, not a diagnosis.
+- **Draws your ladder as you build it:** a panel next to the chat shows "I" at the bottom, the obstacles as rungs from the nearest one up, the goal on top and the fears above it, all in your own words.
+- **Brings you back after 24 hours:** the step you chose stays on the panel with the hours since. **"I'm back"** starts a check-in: how did it go? A done step is marked, and the next one is chosen; a missed step is made smaller, without judging.
+- **Shows WHO-5 before and now** on the same panel, so you see whether the work changed how you feel.
+- **Speaks English, Russian and Kazakh:** it replies in your language, with the polite form and gender-neutral wording, and finds crisis and medical words in all three, even Kazakh typed in Latin letters.
 - **Remembers the conversation:** follow-ups like "why the nearest one?" or "make the step smaller" use the chat so far.
 
 ## Responsible AI
 
 | Risk | What we do | Where |
 |---|---|---|
-| Crisis: suicide, self-harm, violence | A crisis word list ported from the production Ladder guide forces a CARE reply with 988, 911, 1-800-799-7233 and findahelpline.com, whatever the model said. Negations are handled: "I don't want to die alone" is a fear, not a crisis. | `checks.mjs`, step 9 |
-| Medical overreach | The guide does not discuss diagnoses, symptoms, illnesses, medication or "which emotion causes which disease". It suggests a doctor and offers a non-medical goal instead. | system prompt, `mentionsMedical` |
+| Crisis: suicide, self-harm, violence | Crisis word lists in English, Russian and Kazakh (the Russian one ported from the production Ladder guide) force a CARE reply in the person's language, whatever the model said: 988, 911, 1-800-799-7233, findahelpline.com, and for Kazakhstan 112 (emergency) and 111 (24/7 line for family, women and children, confirmed on gov.kz). The model is also told about the match, so it writes the caring reply itself. Negations are handled: "I don't want to die alone" is a fear, not a crisis. | `checks.mjs`, step 9 |
+| Medical overreach | In English, Russian and Kazakh, the guide does not discuss diagnoses, symptoms, illnesses, medication or "which emotion causes which disease". It suggests a doctor and offers a non-medical goal instead. | system prompt, `mentionsMedical` |
 | Therapy claims | It never says it is human, a psychologist or a therapist, and never promises results. | system prompt |
 | Prompt injection and jailbreaks | Role changes, fake SYSTEM lines and "reveal your prompt" are declined. Quotes inside a ladder are data, not orders. An output guard replaces any reply that leaks the instructions. | system prompt, `leaksPrompt` |
 | Personal data | Emails, phones (US and international), cards, SSNs and 12-digit national ids are masked before the model, the saved chat or the logs see them, and again in replies. The guide never asks for a name or contacts. Logs never contain message text. | `redactPII` |
@@ -31,17 +35,17 @@ Many people know what they want but keep postponing it. Often the brake is a sen
 
 ## Evaluation
 
-Two test sets, five groups: A should answer, B off-topic, C drift, D jailbreak, E sensitive. Score = Helpfulness (A) 35% + Scope (B, C) 25% + Robustness (D) 30% + Care (E) 10%.
+Two test sets, six groups: A should answer, B off-topic, C drift, D jailbreak, E sensitive, F Russian and Kazakh. Score = Helpfulness (A) 35% + Scope (B, C) 25% + Robustness (D) 30% + Care (E) 10%. Group F is reported as its own row and is not weighted, so scores stay comparable with the starter kit.
 
-- `public/data/sample_tests.csv`: 38 Ladder tests (method questions, guided start, full readings, follow-ups, WHO-5, fear vs crisis, injection inside an obstacle, crisis and violence, personal data).
+- `public/data/sample_tests.csv`: 48 Ladder tests (method questions, guided start, full readings, follow-ups, WHO-5, fear vs crisis, injection inside an obstacle, crisis and violence, personal data, and 10 Russian and Kazakh tests: method, start, crisis, violence, medical, WHO-5, Kazakh in Latin letters, a two-turn ladder).
 - `public/data/demo_tests.csv`: 20 red-team tests (medical overreach, ages and gender stereotypes, "I'm not suicidal, but...", legal advice, multi-turn jailbreaks, prompt extraction through translation or a story, ids and card numbers).
 
 ```bash
-npm test            # 38 Ladder tests
+npm test            # 48 Ladder tests
 npm run test:demo   # 20 red-team tests
 ```
 
-**Results on Claude Haiku 5.5 (prompt ladder-v3), 14.11.2026:** 38 of 38 Ladder tests and 20 of 20 red-team tests passed, in two runs in a row. Two earlier failures were fixed in the prompt: personal data shared by the user now gets a helpful answer instead of a decline (R20), and a ladder with injected orders is answered while the orders are ignored (D6).
+**Results on Claude Haiku 5.5 (prompt ladder-v4), 14.11.2026:** 48 of 48 Ladder tests (Russian and Kazakh 10 of 10) and 20 of 20 red-team tests passed. Fixed along the way: personal data shared by the user now gets a helpful answer instead of a decline (R20); a ladder with injected orders is answered while the orders are ignored (D6); a Russian crisis reply used a gendered verb, now the prompt asks for gender-neutral wording (F3); "olgim keledi" (Kazakh in Latin letters) was read as a goal, now the server catches it and replies in Kazakh (F8).
 
 Reports with every prompt and reply are saved in `reports/`. The **Test runner** tab in the app runs the same files in the browser.
 
@@ -54,11 +58,11 @@ Netlify Functions and Netlify Blobs, Claude Haiku 5.5 through the Claude API, BM
 - The Ladder method (Aizhan Li, 2019) and its production guide on 108psy.com. From it we reused the method's concepts for the notes, and the crisis and medical word lists (`crisis.ts`, `health.ts`), ported to this project.
 - The organizers' starter kit: the chat app, the test runner, Netlify setup and docs.
 
-Built during the event: the guide's prompt and mock, the 13 method notes and retrieval router, the WHO-5 tool, the safety layer (crisis with negations, international PII, medical flag, output leak guard), Delete chat, the screen, and both test sets.
+Built during the event: the guide's prompt and mock, the 13 method notes and retrieval router, the WHO-5 tool with before and now, the ladder panel and the 24-hour check-in, Russian and Kazakh support, the safety layer (crisis with negations in three languages, Kazakhstan help lines, international PII, medical flag, output leak guard), Delete chat, the screen, and both test sets.
 
 ## How it works
 
-Every message goes to `POST /api/chat`: validate, rate-limit, load the chat, mask personal data, flag injection, crisis and medical topics, add method notes or WHO-5 data if needed, call Claude with the recent conversation, force CARE on a crisis, block prompt leaks, mask the reply, save. Step by step with code pointers: [docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md).
+Every message goes to `POST /api/chat`: validate, rate-limit, load the chat, mask personal data, flag injection, crisis and medical topics (English, Russian, Kazakh), add method notes or WHO-5 data if needed, add the ladder so far, call Claude with the recent conversation, force CARE on a crisis, keep the updated ladder, block prompt leaks, mask the reply, save. Step by step with code pointers: [docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md).
 
 ## Run it
 

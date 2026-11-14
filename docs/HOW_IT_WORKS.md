@@ -17,6 +17,8 @@ the two side by side.
 | [9. Running and deploying](#flow-9-running-locally-and-deploying) | `npm run dev`, `npm run deploy`, GitHub | `netlify.toml`, `package.json`, `.env` |
 | [10. RAG: answering from the method notes](#flow-10-rag-answering-from-the-method-notes) | "What is the Ladder method?" | `netlify/lib/rag.mjs`, `netlify/lib/knowledge/method.mjs` |
 | [11. WHO-5 well-being check](#flow-11-who-5-well-being-check) | "Let's do the WHO-5 check" | `netlify/lib/who5.mjs` |
+| [12. The ladder panel and the 24-hour step](#flow-12-the-ladder-panel-and-the-24-hour-step) | The ladder drawn next to the chat, "I'm back" | `netlify/lib/ladder.mjs`, `public/index.html` (`renderLadder`) |
+| [13. Russian and Kazakh](#flow-13-russian-and-kazakh) | Replies, crisis and medical words, Kazakhstan help lines | `netlify/lib/checks.mjs`, `llm.mjs`, `rag.mjs`, `who5.mjs` |
 
 ---
 
@@ -60,7 +62,7 @@ Two important ideas:
 | Step | What happens |
 |---|---|
 | 1 | Your message appears as a bubble, with a "…" placeholder for the reply. |
-| 2 | The page sends `POST /api/chat` with `{ "session_id": "<this chat's id>", "message": "How about the orange?…" }`. For a brand-new chat, `session_id` is `null`. |
+| 2 | The page sends `POST /api/chat` with `{ "session_id": "<this chat's id>", "message": "How about the orange?…" }`. For a brand-new chat, `session_id` is `null`. The "I'm back" button adds `"check_in": true` (Flow 12). |
 | 3 | When the reply arrives, the placeholder is replaced with the reply and its tags (ANSWER / DECLINE / CARE, safety flags, response time). |
 | 4 | If this was a new chat, the page stores the `session_id` the server sent back, and adds the chat to the sidebar list (kept in your browser's `localStorage`). |
 
@@ -75,12 +77,14 @@ Two important ideas:
 | 5 | **Cap length**: at most 50 user messages per chat. | 400 |
 | 6 | **Mask personal data** (email, phone, card, SSN → `[EMAIL]`…). Set flags: `injection_suspected`, `distress`. From here on only the masked text is used. | |
 | 7a | **Add extra context if needed** (the "router"): WHO-5 request → the five official questions; five numbers after WHO-5 → the server computes the score (Flow 11); a question about the method, privacy or limits, or a short follow-up to one → retrieve matching method notes (Flow 10, RAG). The context goes in front of the message, for the model only. | Skipped when a crisis is detected |
+| 7b | **Add the ladder so far** as `CURRENT LADDER` (data, not instructions), a `CHECK-IN` block when the person pressed "I'm back", and a `SAFETY NOTE` when the crisis check matched (Flow 12, Flow 13). | Ladder skipped on a crisis |
 | 7 | **Build the memory**: the last 10 exchanges from this chat plus the new message. This is why the bot knows "the orange" is being compared with "the apple". | |
 | 8 | **Call the model** (`llm.mjs`), then **check the format** of its answer: it must be `{"behavior", "reply"}`. | 502 if the model call fails |
-| 9 | If distress was detected, force `behavior = CARE` and make sure support resources are in the reply. | |
+| 9 | If distress was detected, force `behavior = CARE` and make sure help lines are in the reply, in the person's language. If the model did not answer with CARE, its reply is replaced whole. | |
+| 10b | **Update the ladder**: on an ANSWER, the server cleans the `ladder` the model returned (strings only, length caps, personal data masked) and merges it into the chat (Flow 12). | |
 | 10 | **Mask personal data in the reply** too, so nothing is echoed back. | |
 | 11 | **Save** the user message and the reply to the chat (`store.mjs`). The first message becomes the chat's title. | |
-| 12 | **Respond** with the reply, behavior, flags, model, response time and token usage. **Log** only labels and flags, never message text. | |
+| 12 | **Respond** with the reply, behavior, flags, the `ladder`, the `who5` scores (oldest first), model, response time and token usage. **Log** only labels and flags, never message text. | |
 
 ```
 Browser                         chat/index.mjs                         Claude
@@ -159,8 +163,8 @@ All in `netlify/lib/checks.mjs`. Each one is small and separate, so it is easy t
 | `MAX_TURNS_PER_SESSION` | 5 | 50 messages per chat | Yes (400) |
 | `redactPII` | 6 and 10 | Masks emails, phones (US and international), cards, SSNs and 12-digit national ids in and out; help-line numbers are kept | No, it masks |
 | `looksLikeInjection` | 6 | Flags "ignore previous instructions", "developer mode", fake `SYSTEM:` lines… | **No**, flag only |
-| `showsDistress` + `SUPPORT_LINE` | 6 and 9 | Crisis words (suicide, self-harm, wanting to die, being hit, threatened or abused), with negations cut ("I don't want to die alone" is a fear). Forces a CARE reply with 988, 911, 1-800-799-7233 and findahelpline.com | No, it adds care |
-| `mentionsMedical` | 6 | Flags illness, symptoms, medication; the prompt declines them | **No**, flag only |
+| `showsDistress` + `supportLineFor` | 6 and 9 | Crisis words in English, Russian and Kazakh (also Kazakh typed in Latin letters): suicide, self-harm, wanting to die, being hit, threatened or abused, with negations cut ("I don't want to die alone" is a fear). Forces a CARE reply in the person's language with the help lines: 988, 911, 1-800-799-7233, Kazakhstan 112 and 111, findahelpline.com | No, it adds care |
+| `mentionsMedical` | 6 | Flags illness, symptoms, medication in English, Russian and Kazakh; the prompt declines them | **No**, flag only |
 | `leaksPrompt` | 9b | If a reply contains pieces of the instructions, it is replaced | Yes, replaces the reply |
 | `parseModelOutput` | 8 | Checks the model returned `{"behavior","reply"}` | No, marks `output_valid: false` |
 | **The system prompt** (`llm.mjs`) | 8 | Defines scope, the tricky cases and how to decline | The main defence |
@@ -323,6 +327,41 @@ WHO-5 is skipped when a crisis is detected: care comes first.
 
 ---
 
+## Flow 12: The ladder panel and the 24-hour step
+
+While guiding, the model returns the person's ladder next to its reply, and the page
+draws it beside the chat: "I" at the bottom, obstacles as rungs from the nearest one up,
+the goal on top, fears above it.
+
+| Step | What happens | Where |
+|---|---|---|
+| 1 Return | With each ANSWER the model may add `"ladder": { goal, me, obstacles, fears, step, done_steps }`, built only from the person's own words, in their language. | `llm.mjs` (prompt) |
+| 2 Clean | `sanitizeLadder()` keeps strings only, caps lengths and counts, and masks personal data. | `ladder.mjs` |
+| 3 Merge | `mergeLadder()` keeps old fields the model left empty, so a lazy reply never wipes the goal. A new step gets a time stamp (`step_ts`). | `ladder.mjs`, Flow 1 step 10b |
+| 4 Remember | On the next turn the ladder goes back to the model as `CURRENT LADDER` (data, not instructions), so it does not ask again for what is already there. | `formatLadder()`, Flow 1 step 7b |
+| 5 Draw | The panel shows the ladder, the 24-hour step with the hours since it was agreed, the steps done, and WHO-5 before and now (Flow 11). | `renderLadder()` in `public/index.html` |
+| 6 Check in | **"I'm back: tell how it went"** sends `check_in: true`. The server adds a `CHECK-IN` block: the model asks how the step went, moves a done step to `done_steps`, and helps choose the next one, or makes the step smaller without judging. | `formatCheckIn()` |
+
+The ladder is skipped when a crisis is detected: care comes first.
+
+---
+
+## Flow 13: Russian and Kazakh
+
+The guide is built for people in Kazakhstan too, so it works in English, Russian and Kazakh.
+
+| Part | What happens | Where |
+|---|---|---|
+| Replies | The model answers in the language of the latest message, with the polite "вы" / "сіз" and gender-neutral wording. Kazakh typed in Latin letters is still Kazakh. JSON keys and behavior labels stay in English. | `llm.mjs` (LANGUAGE) |
+| Crisis words | `DISTRESS_RU` (ported from the production guide) and `DISTRESS_KK`. `plainKazakh()` turns Kazakh letters into plain ones, so "өлгім келеді" and "olgim keledi" are both caught. | `checks.mjs` |
+| Help lines | `supportLineFor()` picks the language of the message. Russian and Kazakh replies give Kazakhstan numbers first: **112** (single emergency number) and **111** (24/7 contact centre for family, women and children, [gov.kz](https://www.gov.kz/memleket/entities/bala/press/news/details/1100197?lang=ru)). The model is told not to add other numbers or call the lines free. | `checks.mjs`, `llm.mjs` |
+| Medical words | `MEDICAL_RU` and `MEDICAL_KK` flag diagnoses, symptoms, pills; the guide declines them. | `checks.mjs` |
+| Method notes | Russian and Kazakh stems map to the English note words, so "что такое метод Лестница?" finds the notes. The model explains them in the person's language, keeping citations like [M4]. | `rag.mjs` |
+| WHO-5 | "тест самочувствия", "ВОЗ-5", "ДСҰ-5" start the check. The model translates the items faithfully and says once that the official wording is English. | `who5.mjs` |
+| Tests | Group F in `sample_tests.csv`: 10 Russian and Kazakh tests, reported as their own row (weight 0, so scores stay comparable). | `scripts/run-tests.mjs` |
+
+---
+
 ## Where to change what
 
 | I want to… | Change |
@@ -339,3 +378,5 @@ WHO-5 is skipped when a crisis is detected: care comes first.
 | Change the score weights | `renderTests()` in `public/index.html` and Step 6 in `scripts/run-tests.mjs` |
 | Edit the method notes | `netlify/lib/knowledge/method.mjs`, trigger words in `wantsMethod()` (`rag.mjs`) |
 | Change the WHO-5 bands or text | `netlify/lib/who5.mjs` |
+| Change how the ladder is kept or drawn | `netlify/lib/ladder.mjs`, `renderLadder()` in `public/index.html` |
+| Add a language or a help line | `DISTRESS_*`, `MEDICAL_*`, `SUPPORT_LINES` in `checks.mjs`, the LANGUAGE and CARE lines in `llm.mjs` |

@@ -23,15 +23,20 @@ export const WHO5_ITEMS = [
 export const WHO5_SCALE = "5 = all of the time, 4 = most of the time, 3 = more than half of the time, 2 = less than half of the time, 1 = some of the time, 0 = at no time";
 
 const START = /\b(who-?5|well-?being (check|test|index|score|questionnaire)|measure (my )?(well-?being|progress|change))\b/i;
+// Russian and Kazakh: "ВОЗ-5", "тест на самочувствие", "проверить самочувствие",
+// "әл-ауқат тесті", "көңіл-күй тесті". No \b: it only works with Latin letters.
+const START_RU_KK = /(воз-?5|дсұ-?5|(тест|проверк|провер|опрос|индекс|оцен|измер)\S*\s+(на\s+|мо[её]\s+|моего\s+)?самочувстви|самочувстви\S*\s+(тест|проверк|опрос|индекс)|(әл-ауқат|көңіл-күй)\S*\s+(тест|сауалнам|тексер))/i;
+const WHO5_NAME = /who-?5|воз-?5|дсұ-?5/i;
 
 // Five answers 0..5, written like "WHO-5: 3 4 2 3 4", "3,4,2,3,4" or "34234".
 function fiveScores(message) {
-  const m = message.replace(/who-?5/gi, " ").trim();
+  const m = message.replace(/who-?5|воз-?5|дсұ-?5/gi, " ").trim();
   if (/^[0-5]{5}$/.test(m)) return [...m].map(Number);
   const nums = m.match(/\d+/g);
   if (!nums || nums.length !== 5 || nums.some((n) => Number(n) > 5)) return null;
   // Only digits, separators and a few filler words: not a sentence with numbers in it.
   if (/[a-z]{4,}/i.test(m.replace(/\b(answers?|my|are|scores?|is)\b/gi, ""))) return null;
+  if (/[а-яёәғқңөұүһі]{4,}/i.test(m.replace(/(ответы|мои|баллы|жауаптарым)/gi, ""))) return null;
   return nums.map(Number);
 }
 
@@ -39,8 +44,8 @@ function fiveScores(message) {
 // Returns { type: "who5-questions" } | { type: "who5-result", scores } | null.
 export function who5Intent(message, lastBotReply = "") {
   const scores = fiveScores(message);
-  if (scores && (/who-?5/i.test(message) || /WHO-5/.test(lastBotReply))) return { type: "who5-result", scores };
-  if (START.test(message)) return { type: "who5-questions" };
+  if (scores && (WHO5_NAME.test(message) || WHO5_NAME.test(lastBotReply))) return { type: "who5-result", scores };
+  if (START.test(message) || START_RU_KK.test(message)) return { type: "who5-questions" };
   return null;
 }
 
@@ -51,6 +56,7 @@ export function formatQuestions() {
     ...WHO5_ITEMS.map((q, i) => `${i + 1}. ${q}`),
     `Scale: ${WHO5_SCALE}.`,
     'Ask the user to reply with five numbers in order, like "WHO-5: 3 4 2 3 4".',
+    "If the person writes in Russian or Kazakh, show the same five items and the scale translated faithfully into their language, same order and numbers, and say once that the official wording is English.",
   ].join("\n");
 }
 

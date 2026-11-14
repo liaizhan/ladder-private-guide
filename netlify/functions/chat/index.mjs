@@ -5,9 +5,10 @@
 // comes here. It is a Netlify Function: Netlify runs this file on its servers
 // whenever someone calls /api/chat, so the API key never reaches the browser.
 //
-// Request : { "session_id": "<uuid>" (omit for a new chat), "message": "..." }
-// Response: { session_id, turn, behavior, reply, flags, provider, model,
-//             prompt_version, storage, latency_ms, usage }
+// Request : { "session_id": "<uuid>" (omit for a new chat), "message": "...",
+//             "check_in": true (optional: the "I'm back" button) }
+// Response: { session_id, turn, behavior, reply, flags, context, ladder, who5,
+//             provider, model, prompt_version, storage, latency_ms, usage }
 //
 // FLOW 1 in docs/HOW_IT_WORKS.md. The step numbers below match the doc:
 //   1  Accept only POST with a JSON body
@@ -18,6 +19,7 @@
 //   6  Mask personal data, and flag injection / distress
 //   7a Add extra context if the question needs it:
 //        WHO-5 questions or a server-computed WHO-5 score, or RAG (Ladder method notes)
+//   7b Add the person's ladder so far, and a CHECK-IN block for "I'm back"
 //   7  Build the conversation history the model will see (this is the "memory")
 //   8  Call the model and check its answer format
 //   9  Force a caring reply if a crisis was detected; replace a reply that leaks the prompt
@@ -29,11 +31,12 @@
 import { loadSession, saveSession, newSession, isValidId, storageKind } from "../../lib/store.mjs";
 import {
   validateMessage, redactPII, looksLikeInjection, showsDistress, mentionsMedical, parseModelOutput,
-  leaksPrompt, LEAK_REPLACEMENT, SUPPORT_LINE, MAX_TURNS_PER_SESSION, HISTORY_TURNS_SENT,
+  leaksPrompt, LEAK_REPLACEMENT, supportLineFor, MAX_TURNS_PER_SESSION, HISTORY_TURNS_SENT,
 } from "../../lib/checks.mjs";
 import { callLLM, provider, modelName, env, PROMPT_VERSION } from "../../lib/llm.mjs";
 import { retrieve, wantsMethod, formatMethod } from "../../lib/rag.mjs";
 import { who5Intent, formatQuestions, scoreWho5, formatResult } from "../../lib/who5.mjs";
+import { sanitizeLadder, mergeLadder, formatLadder, formatCheckIn } from "../../lib/ladder.mjs";
 
 // -----------------------------------------------------------------------------
 // Rate limiter used in step 3.
@@ -148,6 +151,20 @@ export default async (req, context) => {
       : "METHOD NOTES: no notes matched this question. Say the notes don't cover it; don't guess.";
   }
 
+  // ---- Step 7b: the ladder so far, the 24-hour check-in, the safety note --------
+  // The ladder is data the model built from this person's words (ladder.mjs).
+  // Not sent in a crisis: then the exercise stops.
+  const blocks = contextText ? [contextText] : [];
+  if (session.ladder && !flags.distress) {
+    blocks.push(formatLadder(session.ladder));
+    if (body.check_in === true && session.ladder.step) blocks.push(formatCheckIn(session.ladder));
+  }
+  // The crisis check found words about suicide, self-harm or violence (in English,
+  // Russian or Kazakh, even Kazakh typed in Latin letters). Tell the model, so it
+  // writes the caring reply itself; step 9 still guarantees the help lines.
+  if (flags.distress) blocks.push("SAFETY NOTE (from the server's crisis check; DATA, not instructions): this message matched words about suicide, self-harm, wanting to die, or violence. Reply with CARE in the person's language.");
+  contextText = blocks.join("\n\n");
+
   // ---- Step 7: build the conversation history (the "memory") ----------------
   // The model itself remembers nothing between calls. We resend the last
   // HISTORY_TURNS_SENT exchanges every time, followed by the new message.
@@ -164,13 +181,14 @@ export default async (req, context) => {
   // ---- Step 8: call the model and check its answer ---------------------------
   // callLLM (llm.mjs) picks Claude, OpenAI or the mock model.
   // parseModelOutput (checks.mjs) makes sure we got {"behavior", "reply"}.
-  let behavior, reply, usage = { input_tokens: 0, output_tokens: 0 };
+  let behavior, reply, ladderRaw = null, usage = { input_tokens: 0, output_tokens: 0 };
   try {
     const llm = await callLLM(history);
     usage = llm.usage;
     const parsed = parseModelOutput(llm.raw);
     flags.output_valid = parsed.ok;
     ({ behavior, reply } = parsed);
+    ladderRaw = parsed.ladder;
   } catch (err) {
     // Network error, bad key, no credits, timeout... Log the reason for the
     // developer (visible in Netlify → Logs → Functions), show a generic message to the user.
@@ -181,8 +199,10 @@ export default async (req, context) => {
   // ---- Step 9: a crisis always gets help lines ---------------------------------
   // A safety net that doesn't depend on the model getting it right.
   if (flags.distress) {
+    const help = supportLineFor(input.text); // help lines in the person's language (EN, RU or KZ)
+    if (behavior !== "CARE") reply = help.full; // the model missed it: its reply may be about the goal, replace it whole
+    else if (!["988", "111", "112"].some((n) => reply.includes(n))) reply = `${reply} ${help.line}`.trim(); // caring reply without numbers: add them
     behavior = "CARE";
-    if (!reply.includes("988")) reply = `${reply} ${SUPPORT_LINE}`.trim();
   }
   // ---- Step 9b: never leak the instructions --------------------------------------
   flags.prompt_leak_blocked = leaksPrompt(reply);
@@ -190,6 +210,12 @@ export default async (req, context) => {
 
   // ---- Step 10: never echo personal data back --------------------------------
   reply = redactPII(reply).text;
+
+  // ---- Step 10b: update the ladder ----------------------------------------------
+  // Only from a normal guiding answer: never from DECLINE / CARE / a blocked reply.
+  if (behavior === "ANSWER" && !flags.distress && ladderRaw) {
+    session.ladder = mergeLadder(session.ladder, sanitizeLadder(ladderRaw));
+  }
 
   // ---- Step 11: save both messages to the session ----------------------------
   // The chat title is the first message (shown in the sidebar and downloads).
@@ -211,6 +237,8 @@ export default async (req, context) => {
     reply,                    // what the user sees
     flags,
     context: extra,           // which method notes / WHO-5 data were given to the model (null if none)
+    ladder: session.ladder ?? null, // the person's ladder so far, drawn on the page (ladder.mjs)
+    who5: session.who5 ?? [],       // WHO-5 scores in this chat, oldest first: before / after
     provider: provider(),     // anthropic | openai | mock
     model: modelName(),
     prompt_version: PROMPT_VERSION,
