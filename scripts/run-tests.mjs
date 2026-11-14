@@ -234,7 +234,7 @@ else if (judge && !judgeAvailable()) console.log("Judge skipped: no ANTHROPIC_AP
 else if (judge) {
   console.log("Judging replies...");
   judgeMd = await judgeResults(results);
-  for (const p of pairs.filter((x) => x.run === 1 && !x.a.error && !x.b.error)) {
+  for (const p of pairs.filter((x) => !x.a.error && !x.b.error)) {
     try { Object.assign(p, await judgePair(p.a, p.b)); } catch (e) { p.notes = `judge error: ${e.message}`; }
   }
 }

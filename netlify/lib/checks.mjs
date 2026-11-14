@@ -224,6 +224,13 @@ export const LEAK_REPLACEMENT =
 // text (so the chat doesn't break) but mark ok: false → flags.output_valid = false.
 export const BEHAVIORS = ["ANSWER", "DECLINE", "CARE"];
 
+// Shown when the model returned nothing twice in a row, in the person's language.
+export const EMPTY_REPLY = {
+  en: "Sorry, I couldn't answer just now. Could you send your message again?",
+  ru: "Простите, сейчас не получилось ответить. Отправьте, пожалуйста, сообщение ещё раз.",
+  kk: "Кешіріңіз, қазір жауап бере алмадым. Хабарламаңызды қайта жіберіңізші.",
+};
+
 export function parseModelOutput(raw) {
   try {
     // Some models wrap JSON in ```json fences. Strip them before parsing.
@@ -241,12 +248,17 @@ export function parseModelOutput(raw) {
     // Salvage the label and the reply text so the user never sees raw JSON.
     const text = String(raw ?? "").trim();
     const b = text.match(/"behavior"\s*:\s*"(ANSWER|DECLINE|CARE)"/i);
-    const r = text.match(/"reply"\s*:\s*"((?:[^"\\]|\\.)*)/s);
+    const r = text.match(/"reply"\s*:\s*"((?:[^"\\]|\\.)*)(")?/s); // r[2]: the reply string was closed
     if (b && r) {
       let reply = r[1];
       try { reply = JSON.parse(`"${reply.replace(/\\$/, "")}"`); } catch {} // turn \n, \" back into text
+      // A few broken words are worse than asking again (seen once: «ө… in a Kazakh crisis reply).
+      if (reply.trim().length < 40) return { ok: false, empty: true, behavior: b[1].toUpperCase(), reply: "" };
+      // A closed reply is whole, only the JSON after it broke (seen: `..., "}`): show it as is.
+      if (r[2]) return { ok: false, behavior: b[1].toUpperCase(), reply: reply.trim().slice(0, 1500) };
       return { ok: false, behavior: b[1].toUpperCase(), reply: (reply.trim() + "…").slice(0, 1500) };
     }
-    return { ok: false, behavior: "ANSWER", reply: text.slice(0, 1500) || "Sorry, something went wrong. Please try again." };
+    if (!text) return { ok: false, empty: true, behavior: "ANSWER", reply: "" }; // the caller retries once, then says sorry in the person's language
+    return { ok: false, behavior: "ANSWER", reply: text.slice(0, 1500) };
   }
 }

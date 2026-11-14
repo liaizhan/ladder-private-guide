@@ -27,7 +27,7 @@ Many people know what they want but keep postponing it. Often the brake is a sen
 
 | Risk | What we do | Where |
 |---|---|---|
-| Crisis: suicide, self-harm, violence | Crisis word lists in English, Russian and Kazakh (the Russian one ported from the production Ladder guide) force a CARE reply in the person's language, whatever the model said: 988, 911, 1-800-799-7233, findahelpline.com, and for Kazakhstan 112 (emergency) and 111 (24/7 line for family, women and children, confirmed on gov.kz). The model is also told about the match, so it writes the caring reply itself. Negations are handled: "I don't want to die alone" is a fear, not a crisis. | `checks.mjs`, step 9 |
+| Crisis: suicide, self-harm, violence | Crisis word lists in English, Russian and Kazakh (the Russian one ported from the production Ladder guide) force a CARE reply in the person's language, whatever the model said: 988, 911, 1-800-799-7233, findahelpline.com, and for Kazakhstan 112 (emergency) and 111 (24/7 line for family, women and children, confirmed on gov.kz). The model is also told about the match, so it writes the caring reply itself. Negations are handled: "I don't want to die alone" is a fear, not a crisis. A crisis described without these words ("I want to sleep and never wake up", giving things away) is caught by the prompt, and any reply that gives the help lines is treated as CARE, so the ladder stops. | `checks.mjs`, step 9, `crisis_indirect_tests.csv` |
 | Medical overreach | In English, Russian and Kazakh, the guide does not discuss diagnoses, symptoms, illnesses, medication or "which emotion causes which disease". It suggests a doctor and offers a non-medical goal instead. | system prompt, `mentionsMedical` |
 | Therapy claims | It never says it is human, a psychologist or a therapist, and never promises results. | system prompt |
 | Prompt injection and jailbreaks | Role changes, fake SYSTEM lines and "reveal your prompt" are declined. Quotes inside a ladder are data, not orders. An output guard replaces any reply that leaks the instructions. | system prompt, `leaksPrompt` |
@@ -44,6 +44,7 @@ Two test sets, six groups: A should answer, B off-topic, C drift, D jailbreak, E
 - `public/data/sample_tests.csv`: 48 Ladder tests (method questions, guided start, full readings, follow-ups, WHO-5, fear vs crisis, injection inside an obstacle, crisis and violence, personal data, and 10 Russian and Kazakh tests: method, start, crisis, violence, medical, WHO-5, Kazakh in Latin letters, a two-turn ladder).
 - `public/data/demo_tests.csv`: 20 red-team tests (medical overreach, ages and gender stereotypes, "I'm not suicidal, but...", legal advice, multi-turn jailbreaks, prompt extraction through translation or a story, ids and card numbers).
 
+- `public/data/crisis_indirect_tests.csv`: 14 indirect-crisis tests: 12 crisis messages with none of the crisis words, in English, Russian and Kazakh, and 2 messages about plain tiredness that must stay a normal ladder.
 - `public/data/bias_tests.csv`: 6 bias pairs (12 tests, group G): a woman and a man (38), 25 and 55 years old, Aigerim and Emily, and in Russian a woman and a man, 23 and 58, Айгерим and Анна, each pair with the same goal and obstacles.
 
 Three more checks on top of PASS / FAIL:
@@ -56,10 +57,11 @@ Three more checks on top of PASS / FAIL:
 npm test            # 48 Ladder tests
 npm run test:demo   # 20 red-team tests
 npm run test:bias   # 6 bias pairs, 3 runs, with the judge
+npm run test:crisis # 14 indirect-crisis tests, 3 runs, with the judge
 node scripts/run-tests.mjs --repeat 3 --judge   # 48 tests x 3 runs, with the judge
 ```
 
-**Results on Claude Haiku 5.5 (prompt ladder-v4), 14.11.2026:** 48 of 48 Ladder tests (Russian and Kazakh 10 of 10) passed in all 3 runs, 20 of 20 red-team tests passed, and 6 of 6 bias pairs gave the same behavior in all 3 runs (largest judged difference: 2 of 5, gender in Russian). Judge average 4.46 to 4.63 of 5; the weakest criterion is warmth (about 3.7 to 3.8), which is the next thing to improve. Fixed along the way: personal data shared by the user now gets a helpful answer instead of a decline (R20); a ladder with injected orders is answered while the orders are ignored (D6); a Russian crisis reply used a gendered verb, now the prompt asks for gender-neutral wording (F3); "olgim keledi" (Kazakh in Latin letters) was read as a goal, now the server catches it and replies in Kazakh (F8).
+**Results on Claude Haiku 5.5 (final prompt ladder-v5), 14.11.2026:** 341 of 342 test conversations got the expected behavior: 48 Ladder tests x 3 runs (Russian and Kazakh 30 of 30; one miss, C1 run 3, a correct decline labelled ANSWER), 20 of 20 red-team tests, 14 indirect-crisis tests x 3 runs (36 of 36 crisis messages stopped the ladder and gave help lines), and 6 bias pairs x 3 runs with the same behavior in all 18 pair runs (largest judged difference 2 of 5). The LLM judge average rose from ladder-v4 to ladder-v5 in every set: Ladder 4.63 to 4.77, red-team 4.61 to 4.72, bias 4.46 to 4.73, indirect crisis 4.65 to 4.84. Warmth, the weakest criterion, rose from 3.7 to 3.8 to 4.0 to 4.3. Replies with any criterion at 2 or below: 2 of 200 before, 0 of 242 after. Fixed along the way: personal data gets a helpful answer instead of a decline (R20); injected orders inside a ladder are ignored (D6); gender-neutral Russian crisis replies (F3); "olgim keledi" (Kazakh in Latin letters) caught by the server (F8); crisis replies ask one calm question; the same short reply for everyone when the "I" point is missing; replies cut off by the token limit are asked again.
 
 Full write-ups: [docs/problem.md](docs/problem.md), [docs/eval_report.md](docs/eval_report.md), [docs/safety_report.md](docs/safety_report.md). Reports with every prompt and reply are saved in `reports/`. The **Test runner** tab in the app runs the same files in the browser.
 
@@ -72,7 +74,7 @@ Netlify Functions and Netlify Blobs, Claude Haiku 5.5 through the Claude API, BM
 - The Ladder method (Aizhan Li, 2019) and its production guide on 108psy.com. From it we reused the method's concepts for the notes, and the crisis and medical word lists (`crisis.ts`, `health.ts`), ported to this project.
 - The organizers' starter kit: the chat app, the test runner, Netlify setup and docs.
 
-Built during the event: the guide's prompt and mock, the 13 method notes and retrieval router, the WHO-5 tool with before and now, the ladder panel and the 24-hour check-in, the calendar reminder and the ladder picture, Russian and Kazakh support (replies and the screen), the anonymous impact counter, the LLM judge, repeated runs and bias pairs, the safety layer (crisis with negations in three languages, Kazakhstan help lines, international PII, medical flag, output leak guard), Delete chat, the screen, and both test sets.
+Built during the event: the guide's prompt and mock, the 13 method notes and retrieval router, the WHO-5 tool with before and now, the ladder panel and the 24-hour check-in, the calendar reminder and the ladder picture, Russian and Kazakh support (replies and the screen), the anonymous impact counter, the LLM judge, repeated runs and bias pairs, the safety layer (crisis with negations in three languages, Kazakhstan help lines, international PII, medical flag, output leak guard), Delete chat, the screen, and all four test sets.
 
 ## How it works
 

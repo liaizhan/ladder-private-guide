@@ -30,7 +30,7 @@
 
 import { loadSession, saveSession, newSession, isValidId, storageKind } from "../../lib/store.mjs";
 import {
-  validateMessage, redactPII, looksLikeInjection, showsDistress, mentionsMedical, parseModelOutput,
+  validateMessage, redactPII, looksLikeInjection, showsDistress, mentionsMedical, parseModelOutput, EMPTY_REPLY, langOf,
   leaksPrompt, LEAK_REPLACEMENT, supportLineFor, MAX_TURNS_PER_SESSION, HISTORY_TURNS_SENT,
 } from "../../lib/checks.mjs";
 import { callLLM, provider, modelName, env, PROMPT_VERSION } from "../../lib/llm.mjs";
@@ -186,9 +186,21 @@ export default async (req, context) => {
   // parseModelOutput (checks.mjs) makes sure we got {"behavior", "reply"}.
   let behavior, reply, ladderRaw = null, usage = { input_tokens: 0, output_tokens: 0 };
   try {
-    const llm = await callLLM(history);
+    let llm = await callLLM(history);
     usage = llm.usage;
-    const parsed = parseModelOutput(llm.raw);
+    let parsed = parseModelOutput(llm.raw);
+    // Cut off: nothing usable, or the token limit stopped the reply mid-word
+    // (seen in Kazakh crisis replies, where the model thinks longer before answering).
+    const cutOff = () => parsed.empty || (!parsed.ok && llm.stop === "max_tokens");
+    if (cutOff()) { // try once more, then fall back
+      llm = await callLLM(history);
+      usage = { input_tokens: usage.input_tokens + llm.usage.input_tokens, output_tokens: usage.output_tokens + llm.usage.output_tokens };
+      parsed = parseModelOutput(llm.raw);
+      if (cutOff()) {
+        if (parsed.behavior === "CARE") parsed.reply = supportLineFor(input.text).full; // a crisis reply: never leave the person without help lines
+        else if (parsed.empty) parsed.reply = EMPTY_REPLY[langOf(input.text)] ?? EMPTY_REPLY.en; // apologise in the person's language
+      }
+    }
     flags.output_valid = parsed.ok;
     ({ behavior, reply } = parsed);
     ladderRaw = parsed.ladder;
@@ -207,6 +219,10 @@ export default async (req, context) => {
     else if (!["988", "111", "112"].some((n) => reply.includes(n))) reply = `${reply} ${help.line}`.trim(); // caring reply without numbers: add them
     behavior = "CARE";
   }
+  // A reply that already gives crisis lines is a crisis reply, whatever label the
+  // model chose (seen once in 42 runs of the indirect-crisis tests: the right words
+  // with the label ANSWER). CARE stops the ladder in the page.
+  if (behavior === "ANSWER" && /\b(988|112)\b|findahelpline/i.test(reply)) { behavior = "CARE"; flags.care_relabelled = true; }
   // ---- Step 9b: never leak the instructions --------------------------------------
   flags.prompt_leak_blocked = leaksPrompt(reply);
   if (flags.prompt_leak_blocked) { behavior = "DECLINE"; reply = LEAK_REPLACEMENT; }
