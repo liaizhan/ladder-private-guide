@@ -9,6 +9,7 @@
     "dev": "netlify dev",
     "test": "node scripts/run-tests.mjs",
     "test:demo": "node scripts/run-tests.mjs --tests public/data/demo_tests.csv",
+    "test:bias": "node scripts/run-tests.mjs --tests public/data/bias_tests.csv --repeat 3 --judge",
     "deploy": "netlify deploy --prod"
   },
   "dependencies": {

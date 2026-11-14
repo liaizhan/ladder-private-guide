@@ -127,6 +127,14 @@
     .lp-done { margin: 0; padding-left: 18px; color: var(--ok); }
     .lp-who5 { font-size: 1.15rem; font-weight: 700; font-variant-numeric: tabular-nums; }
     .lp-who5 .up { color: var(--ok); } .lp-who5 .down { color: var(--bad); }
+    .lp-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+    .lp-actions .btn { padding: 6px 10px; font-size: 0.8rem; }
+    /* Language switch and the anonymous impact numbers (sidebar) */
+    .lang { display: flex; gap: 4px; margin: 0 4px 4px; }
+    .lang button { flex: 1; padding: 4px 0; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); color: var(--muted); font-weight: 700; font-size: 0.78rem; }
+    .lang button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+    .impact { display: grid; gap: 2px; }
+    .impact b { color: var(--text); font-variant-numeric: tabular-nums; }
     @media (max-width: 1000px) {
       .chat-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
       #ladder-panel { order: -1; border-left: 0; border-bottom: 1px solid var(--border); max-height: 34vh; }
@@ -143,21 +151,27 @@
 <div class="app">
   <aside>
     <h1>Ladder Guide</h1>
-    <button class="btn" id="new-chat">+ New chat</button>
+    <div class="lang" role="group" aria-label="Language">
+      <button type="button" data-lang="en" lang="en">EN</button>
+      <button type="button" data-lang="ru" lang="ru">RU</button>
+      <button type="button" data-lang="kz" lang="kk">KZ</button>
+    </div>
+    <button class="btn" id="new-chat" data-i18n="newChat">+ New chat</button>
     <ul id="sessions"></ul>
-    <div class="side-note">No account, no name. Emails, phones and ids are masked before the AI sees them. "Delete chat" erases a chat from the server.</div>
-    <div class="side-note crisis">Self-reflection tool, not therapy or medical advice. In a crisis in the US, call or text 988; elsewhere see findahelpline.com.</div>
+    <div class="side-note" data-i18n="privacy">No account, no name. Emails, phones and ids are masked before the AI sees them. "Delete chat" erases a chat from the server.</div>
+    <div class="side-note crisis" data-i18n="crisis">Self-reflection tool, not therapy or medical advice. In a crisis in the US, call or text 988; elsewhere see findahelpline.com.</div>
+    <div class="side-note impact" id="impact" aria-live="polite"></div>
   </aside>
 
   <main>
     <header>
       <div class="tabs">
-        <button class="on" data-view="chat">Chat</button>
-        <button data-view="tests">Test runner</button>
+        <button class="on" data-view="chat" data-i18n="tabChat">Chat</button>
+        <button data-view="tests" data-i18n="tabTests">Test runner</button>
       </div>
-      <button class="btn ghost" id="dl-json" disabled>Download JSON</button>
-      <button class="btn ghost" id="dl-csv" disabled>Download CSV</button>
-      <button class="btn ghost" id="del-chat" disabled>Delete chat</button>
+      <button class="btn ghost" id="dl-json" disabled data-i18n="dlJson">Download JSON</button>
+      <button class="btn ghost" id="dl-csv" disabled data-i18n="dlCsv">Download CSV</button>
+      <button class="btn ghost" id="del-chat" disabled data-i18n="delChat">Delete chat</button>
     </header>
 
     <!-- ===== Chat view ===== -->
@@ -168,8 +182,8 @@
       </div>
       <form id="composer">
         <div class="composer-inner">
-          <textarea id="input" rows="1" placeholder="Tell me your goal, ask about the Ladder, or type WHO-5…" aria-label="Message"></textarea>
-          <button class="btn" id="send">Send</button>
+          <textarea id="input" rows="1" placeholder="Tell me your goal, ask about the Ladder, or type WHO-5…" aria-label="Message" data-i18n-ph="placeholder"></textarea>
+          <button class="btn" id="send" data-i18n="send">Send</button>
         </div>
       </form>
     </section>
@@ -207,6 +221,7 @@
   // It only talks to our own backend:
   //   POST /api/chat     send a message, get the reply   (netlify/functions/chat)
   //   GET  /api/session  load a saved chat               (netlify/functions/session)
+  //   GET  /api/stats    anonymous impact numbers        (netlify/functions/stats)
   // The API key is never in this file; it stays on the server.
   //
   // Sections (FLOW numbers refer to docs/HOW_IT_WORKS.md):
@@ -216,6 +231,9 @@
   //   D. Chat: sidebar, reopen a chat         → FLOW 2
   //   E. Chat: download JSON / CSV            → FLOW 3
   //   F. Test runner: load, run, show conversations + PASS/FAIL, download → FLOW 7
+  //   G. Language (EN / RU / KZ)               → FLOW 13
+  //   H. 24-hour reminder (.ics) and ladder picture (PNG) → FLOW 12
+  //   I. Impact numbers in the sidebar        → FLOW 14
   // ===========================================================================
 
   // ---------------------------------------------------------------------------
@@ -227,6 +245,101 @@
   // We always set text with textContent (never innerHTML), so text from users or
   // from the model can't inject HTML into the page.
   const el = (tag, props = {}, ...kids) => { const e = Object.assign(document.createElement(tag), props); e.append(...kids); return e; };
+
+  // ---------------------------------------------------------------------------
+  // G. Language: every text on the chat screen in English, Russian and Kazakh.
+  // ---------------------------------------------------------------------------
+  // The bot itself answers in the language you write in (server prompt); this
+  // only changes the buttons, hints and example questions. The test runner tab
+  // stays in English (it is a tool for developers and the jury).
+  // Functions take numbers (hours, counts); {} keeps the wording in one place.
+  const I18N = {
+    en: {
+      newChat: "+ New chat", newChatTitle: "New chat",
+      privacy: 'No account, no name. Emails, phones and ids are masked before the AI sees them. "Delete chat" erases a chat from the server.',
+      crisis: "Self-reflection tool, not therapy or medical advice. In a crisis in the US, call or text 988; elsewhere see findahelpline.com.",
+      tabChat: "Chat", tabTests: "Test runner", dlJson: "Download JSON", dlCsv: "Download CSV", delChat: "Delete chat",
+      placeholder: "Tell me your goal, ask about the Ladder, or type WHO-5…", send: "Send",
+      welcome: "A private guide to the Ladder method by Aizhan Li: see the obstacles between you and one goal, start from the nearest one, and choose one small step for the next 24 hours. Measure the change with the WHO-5 well-being check. No account, no name.",
+      starters: ["What is the Ladder method?", "I want to start my ladder. My goal: save 1,000 dollars by June.",
+        "Goal: run 5 km by May. Obstacles: Coach: you are not sporty; Mom: don't sweat, it's unladylike. Fears: people will laugh",
+        "I want to take the WHO-5 well-being check.", "What's the weather in Almaty today?"],
+      yourLadder: "Your ladder", ladderHint: "As you answer, your ladder is drawn here: the goal on top, the obstacles as rungs, you at the bottom. Work starts from the nearest rung.",
+      fear: "Fear: ", goal: "Goal", notSet: "not set yet", nearest: "Nearest: start here", obstaclesHere: "obstacles appear here", me: "I", meDefault: "where you are now",
+      stepLabel: "Your step for the next 24 hours",
+      agoCheck: (h) => `Agreed ${h} hours ago. Time to check in.`, agoHours: (h) => `Agreed ${h} hour(s) ago. Come back within 24 hours.`, agoJust: "Agreed just now. Come back within 24 hours.",
+      imBack: "I'm back: tell how it went", imBackMsg: "I'm back. Here is how my step went.",
+      remind: "Remind me in 24 h (.ics)", remindHint: "Adds a reminder to your calendar app. No sign-up; the step text is not in the file.",
+      icsTitle: "Ladder: come back to your step", icsDesc: (u) => `Open ${u} and press "I'm back".`,
+      savePng: "Save ladder as picture (PNG)", pngFooter: "Ladder Guide. Ladder method by Aizhan Li",
+      stepsDone: (n) => `Steps done (${n})`,
+      who5Before: "WHO-5 well-being: before", who5BeforeNow: "WHO-5 well-being: before → now",
+      who5Meaningful: "A change of 10 points or more is meaningful.", who5NotYet: "Less than 10 points: not a meaningful change yet.", who5Retake: "Out of 100. Retake it after 7 days: type WHO-5.",
+      delConfirm: "Delete this chat from the server? This cannot be undone.", error: "Error: ", loading: "Loading…",
+      sources: (n) => `Sources given to the model (${n})`,
+      impactTitle: (d) => `Impact so far (anonymous, since ${d})`,
+      impact: { chats_started: "Chats started", goal_named: "Goals named", step_chosen: "24-hour steps chosen", came_back: "Came back to check in", steps_done: "Steps done", who5: "WHO-5 average change" },
+      who5People: (n) => `${n} people`,
+    },
+    ru: {
+      newChat: "+ Новый чат", newChatTitle: "Новый чат",
+      privacy: "Без аккаунта и имени. Почта, телефоны и номера документов скрываются до того, как их увидит ИИ. Кнопка «Удалить чат» стирает чат с сервера.",
+      crisis: "Инструмент для размышлений о себе, не терапия и не медицинский совет. В кризисе в Казахстане: 112 (экстренная помощь) и 111 (круглосуточный телефон доверия). В других странах: findahelpline.com.",
+      tabChat: "Чат", tabTests: "Тесты", dlJson: "Скачать JSON", dlCsv: "Скачать CSV", delChat: "Удалить чат",
+      placeholder: "Напишите свою цель, спросите о методике «Лестница» или наберите ВОЗ-5…", send: "Отправить",
+      welcome: "Личный проводник по методике «Лестница» Айжан Ли: увидеть препятствия между вами и одной целью, начать с ближайшего и выбрать один маленький шаг на 24 часа. Изменение можно измерить тестом самочувствия ВОЗ-5. Без аккаунта и имени.",
+      starters: ["Что такое методика «Лестница»?", "Хочу начать свою лестницу. Моя цель: накопить 500 000 тенге к июню.",
+        "Цель: пробежать 5 км к маю. Препятствия: тренер: ты не спортивная; мама: не потей, это не женственно. Страхи: надо мной будут смеяться",
+        "Хочу пройти тест самочувствия ВОЗ-5.", "Какая сегодня погода в Алматы?"],
+      yourLadder: "Ваша лестница", ladderHint: "По мере ответов здесь рисуется ваша лестница: цель наверху, препятствия перекладинами, вы внизу. Работа начинается с ближайшего препятствия.",
+      fear: "Страх: ", goal: "Цель", notSet: "пока не названа", nearest: "Ближайшее: начните отсюда", obstaclesHere: "здесь появятся препятствия", me: "Я", meDefault: "где вы сейчас",
+      stepLabel: "Ваш шаг на ближайшие 24 часа",
+      agoCheck: (h) => `Договорились ${h} ч назад. Пора рассказать, как прошло.`, agoHours: (h) => `Договорились ${h} ч назад. Возвращайтесь в течение 24 часов.`, agoJust: "Договорились только что. Возвращайтесь в течение 24 часов.",
+      imBack: "Я снова здесь: рассказать, как прошло", imBackMsg: "Я снова здесь. Вот как прошёл мой шаг.",
+      remind: "Напомнить через 24 ч (.ics)", remindHint: "Добавит напоминание в календарь. Без регистрации; текста шага в файле нет.",
+      icsTitle: "Лестница: вернитесь к своему шагу", icsDesc: (u) => `Откройте ${u} и нажмите «Я снова здесь».`,
+      savePng: "Сохранить лестницу картинкой (PNG)", pngFooter: "Ladder Guide. Методика «Лестница» Айжан Ли",
+      stepsDone: (n) => `Сделанные шаги (${n})`,
+      who5Before: "Самочувствие ВОЗ-5: до", who5BeforeNow: "Самочувствие ВОЗ-5: до → сейчас",
+      who5Meaningful: "Изменение на 10 баллов и больше заметное.", who5NotYet: "Меньше 10 баллов: заметного изменения пока нет.", who5Retake: "Из 100. Пройдите снова через 7 дней: наберите ВОЗ-5.",
+      delConfirm: "Удалить этот чат с сервера? Это нельзя отменить.", error: "Ошибка: ", loading: "Загрузка…",
+      sources: (n) => `Что получила модель (${n})`,
+      impactTitle: (d) => `Польза (анонимно, с ${d})`,
+      impact: { chats_started: "Начато чатов", goal_named: "Названо целей", step_chosen: "Выбрано шагов на 24 часа", came_back: "Вернулись рассказать", steps_done: "Сделано шагов", who5: "ВОЗ-5, среднее изменение" },
+      who5People: (n) => `чел.: ${n}`,
+    },
+    kz: {
+      newChat: "+ Жаңа чат", newChatTitle: "Жаңа чат",
+      privacy: "Аккаунтсыз, атсыз. Пошта, телефон және құжат нөмірлері ЖИ көрмей тұрып жасырылады. «Чатты өшіру» батырмасы чатты серверден жояды.",
+      crisis: "Өзіңізді түсінуге арналған құрал, терапия да, медициналық кеңес те емес. Дағдарыс кезінде Қазақстанда: 112 (шұғыл көмек) және 111 (тәулік бойы сенім телефоны). Басқа елдерде: findahelpline.com.",
+      tabChat: "Чат", tabTests: "Тесттер", dlJson: "JSON жүктеу", dlCsv: "CSV жүктеу", delChat: "Чатты өшіру",
+      placeholder: "Мақсатыңызды жазыңыз, «Баспалдақ» әдістемесі туралы сұраңыз немесе ДСҰ-5 деп жазыңыз…", send: "Жіберу",
+      welcome: "Айжан Лидің «Баспалдақ» әдістемесі бойынша жеке жолбасшы: сіз бен бір мақсаттың арасындағы кедергілерді көріп, ең жақынынан бастап, 24 сағатқа бір кішкентай қадам таңдаңыз. Өзгерісті ДСҰ-5 әл-ауқат тестімен өлшеуге болады. Аккаунтсыз, атсыз.",
+      starters: ["«Баспалдақ» әдістемесі деген не?", "Баспалдағымды бастағым келеді. Мақсатым: маусымға дейін 500 000 теңге жинау.",
+        "Мақсат: мамырға дейін 5 км жүгіру. Кедергілер: жаттықтырушы: сен спортшы емессің; анам: терлеме, бұл қызға жараспайды. Қорқыныштар: менен күледі",
+        "ДСҰ-5 әл-ауқат тестін тапсырғым келеді.", "Бүгін Алматыда ауа райы қандай?"],
+      yourLadder: "Сіздің баспалдағыңыз", ladderHint: "Жауап берген сайын мұнда баспалдағыңыз сызылады: жоғарыда мақсат, сатыларда кедергілер, төменде сіз. Жұмыс ең жақын кедергіден басталады.",
+      fear: "Қорқыныш: ", goal: "Мақсат", notSet: "әлі аталмаған", nearest: "Ең жақыны: осыдан бастаңыз", obstaclesHere: "кедергілер осында шығады", me: "Мен", meDefault: "қазір қай жердесіз",
+      stepLabel: "Келесі 24 сағаттағы қадамыңыз",
+      agoCheck: (h) => `${h} сағат бұрын келістік. Қалай өткенін айтатын кез келді.`, agoHours: (h) => `${h} сағат бұрын келістік. 24 сағат ішінде қайта келіңіз.`, agoJust: "Жаңа ғана келістік. 24 сағат ішінде қайта келіңіз.",
+      imBack: "Мен қайта келдім: қалай өткенін айту", imBackMsg: "Мен қайта келдім. Қадамым былай өтті.",
+      remind: "24 сағаттан кейін еске салу (.ics)", remindHint: "Күнтізбеңізге еске салғыш қосады. Тіркелусіз; файлда қадам мәтіні жоқ.",
+      icsTitle: "Баспалдақ: қадамыңызға оралыңыз", icsDesc: (u) => `${u} ашып, «Мен қайта келдім» батырмасын басыңыз.`,
+      savePng: "Баспалдақты сурет етіп сақтау (PNG)", pngFooter: "Ladder Guide. Айжан Лидің «Баспалдақ» әдістемесі",
+      stepsDone: (n) => `Жасалған қадамдар (${n})`,
+      who5Before: "ДСҰ-5 әл-ауқат: бастапқы", who5BeforeNow: "ДСҰ-5 әл-ауқат: бастапқы → қазір",
+      who5Meaningful: "10 және одан көп ұпайға өзгеріс маңызды.", who5NotYet: "10 ұпайдан аз: әзірге маңызды өзгеріс жоқ.", who5Retake: "100-ден. 7 күннен кейін қайта тапсырыңыз: ДСҰ-5 деп жазыңыз.",
+      delConfirm: "Бұл чатты серверден өшіру керек пе? Мұны қайтару мүмкін емес.", error: "Қате: ", loading: "Жүктелуде…",
+      sources: (n) => `Модельге берілгені (${n})`,
+      impactTitle: (d) => `Пайда (анонимді, ${d} бастап)`,
+      impact: { chats_started: "Басталған чаттар", goal_named: "Аталған мақсаттар", step_chosen: "Таңдалған 24 сағаттық қадамдар", came_back: "Қайта келіп айтқандар", steps_done: "Жасалған қадамдар", who5: "ДСҰ-5, орташа өзгеріс" },
+      who5People: (n) => `${n} адам`,
+    },
+  };
+  const LANG_KEY = "lg_lang";
+  const guessLang = () => { const n = (navigator.language || "en").toLowerCase(); return n.startsWith("kk") ? "kz" : n.startsWith("ru") ? "ru" : "en"; };
+  let lang = (() => { try { const v = localStorage.getItem(LANG_KEY); if (I18N[v]) return v; } catch {} return guessLang(); })();
+  const t = (key, ...args) => { const v = I18N[lang][key] ?? I18N.en[key]; return typeof v === "function" ? v(...args) : v; };
 
   // localStorage wrapper. Used only for the sidebar's list of chat ids.
   // Wrapped in try/catch because storage can be blocked (e.g. private browsing).
@@ -279,16 +392,12 @@
   // Welcome screen with clickable example questions (shown for a new chat).
   function renderEmpty() {
     renderLadder(null, []);
-    const starters = [
-      "What is the Ladder method?",                                     // RAG (method notes)
-      "I want to start my ladder. My goal: save 1,000 dollars by June.", // guided ladder
-      "Goal: run 5 km by May. Obstacles: Coach: you are not sporty; Mom: don't sweat, it's unladylike. Fears: people will laugh", // full reading
-      "I want to take the WHO-5 well-being check.",                     // WHO-5 (server maths)
-      "What's the weather in Almaty today?",                            // off-topic → declines
-    ];
+    // Example questions, in the chosen language (section G): method notes (RAG),
+    // a guided ladder, a full reading, WHO-5 (server maths), off-topic (declines).
+    const starters = t("starters");
     thread.replaceChildren(el("div", { className: "empty" },
       el("h2", { textContent: "Ladder Guide" }),
-      el("div", { textContent: "A private guide to the Ladder method by Aizhan Li: see the obstacles between you and one goal, start from the nearest one, and choose one small step for the next 24 hours. Measure the change with the WHO-5 well-being check. No account, no name." }),
+      el("div", { textContent: t("welcome") }),
       el("div", { className: "starters" }, ...starters.map((t) => el("button", { type: "button", textContent: t, onclick: () => { input.value = t; send(); } })))));
   }
 
@@ -319,7 +428,7 @@
           if (ctxType === "rag") return el("li", {}, el("b", { textContent: `[${x.id}] ` }), x.text);
           return el("li", {}, el("b", { textContent: "WHO-5: " }), `score ${x.score}/100, band ${x.band}${x.change != null ? `, change ${x.change > 0 ? "+" : ""}${x.change}` : ""}`);
         }));
-        b.append(el("details", { className: "src-list" }, el("summary", { textContent: `Sources given to the model (${data.context.items.length})` }), list));
+        b.append(el("details", { className: "src-list" }, el("summary", { textContent: t("sources", data.context.items.length) }), list));
       }
     }
     thread.append(b);
@@ -330,43 +439,48 @@
   // The ladder panel (Flow 12). Drawn from data the server keeps for this chat:
   //   fears (above the goal) · goal · obstacles as rungs, nearest at the bottom · "I"
   //   the 24-hour step with an "I'm back" button · steps done · WHO-5 before → after
+  let shownLadder = null, shownWho5 = []; // what is on screen now (redrawn when the language changes)
   function renderLadder(l, who5 = []) {
+    shownLadder = l; shownWho5 = who5 ?? [];
     const panel = $("ladder-panel");
     const has = l && (l.goal || l.me || l.obstacles?.length || l.step || l.done_steps?.length);
     panel.classList.toggle("is-empty", !has && !who5?.length);
-    const kids = [el("h3", { textContent: "Your ladder" })];
-    if (!has) kids.push(el("p", { className: "lp-hint", textContent: "As you answer, your ladder is drawn here: the goal on top, the obstacles as rungs, you at the bottom. Work starts from the nearest rung." }));
+    const kids = [el("h3", { textContent: t("yourLadder") })];
+    if (!has) kids.push(el("p", { className: "lp-hint", textContent: t("ladderHint") }));
     if (has) {
-      if (l.fears?.length) kids.push(el("div", { className: "lp-fears" }, ...l.fears.map((f) => el("div", { className: "lp-fear", textContent: "Fear: " + f }))));
-      kids.push(el("div", { className: "lp-goal" }, el("b", { textContent: "Goal" }), l.goal || "not set yet"));
+      if (l.fears?.length) kids.push(el("div", { className: "lp-fears" }, ...l.fears.map((f) => el("div", { className: "lp-fear", textContent: t("fear") + f }))));
+      kids.push(el("div", { className: "lp-goal" }, el("b", { textContent: t("goal") }), l.goal || t("notSet")));
       const rungs = (l.obstacles ?? []).map((o, i) => el("div", { className: "lp-rung" + (i === 0 ? " first" : "") },
-        ...(i === 0 ? [el("small", { textContent: "Nearest: start here" })] : []), o)).reverse(); // nearest is drawn lowest
-      kids.push(el("div", { className: "lp-ladder" }, ...(rungs.length ? rungs : [el("div", { className: "lp-rung empty", textContent: "obstacles appear here" })])));
-      kids.push(el("div", { className: "lp-me" }, el("b", { textContent: "I" }), l.me || "where you are now"));
+        ...(i === 0 ? [el("small", { textContent: t("nearest") })] : []), o)).reverse(); // nearest is drawn lowest
+      kids.push(el("div", { className: "lp-ladder" }, ...(rungs.length ? rungs : [el("div", { className: "lp-rung empty", textContent: t("obstaclesHere") })])));
+      kids.push(el("div", { className: "lp-me" }, el("b", { textContent: t("me") }), l.me || t("meDefault")));
     }
     if (l?.step) {
       const h = l.step_ts ? Math.floor((Date.now() - Date.parse(l.step_ts)) / 3_600_000) : 0;
       kids.push(el("div", { className: "lp-card" },
-        el("span", { className: "label", textContent: "Your step for the next 24 hours" }),
+        el("span", { className: "label", textContent: t("stepLabel") }),
         el("span", { textContent: l.step }),
-        el("span", { className: "lp-hint", textContent: h >= 24 ? `Agreed ${h} hours ago. Time to check in.` : `Agreed ${h ? h + " hour(s)" : "just now"}. Come back within 24 hours.` }),
-        el("button", { className: "btn" + (h >= 24 ? "" : " ghost"), type: "button", textContent: "I'm back: tell how it went",
-          onclick: () => { input.value = "I'm back. Here is how my step went."; send({ check_in: true }); } })));
+        el("span", { className: "lp-hint", textContent: h >= 24 ? t("agoCheck", h) : h ? t("agoHours", h) : t("agoJust") }),
+        el("button", { className: "btn" + (h >= 24 ? "" : " ghost"), type: "button", textContent: t("imBack"),
+          onclick: () => { input.value = t("imBackMsg"); send({ check_in: true }); } }),
+        el("button", { className: "btn ghost", type: "button", textContent: t("remind"), title: t("remindHint"), onclick: () => downloadReminder(l) })));
     }
     if (l?.done_steps?.length) kids.push(el("div", { className: "lp-card" },
-      el("span", { className: "label", textContent: `Steps done (${l.done_steps.length})` }),
+      el("span", { className: "label", textContent: t("stepsDone", l.done_steps.length) }),
       el("ul", { className: "lp-done" }, ...l.done_steps.map((x) => el("li", { textContent: x })))));
     if (who5?.length) {
       const first = who5[0].score, last = who5.at(-1).score, diff = last - first;
       const line = el("div", { className: "lp-who5" }, String(first));
       if (who5.length > 1) line.append(" → ", String(last), " ", el("span", { className: diff >= 0 ? "up" : "down", textContent: `(${diff > 0 ? "+" : ""}${diff})` }));
       kids.push(el("div", { className: "lp-card" },
-        el("span", { className: "label", textContent: who5.length > 1 ? "WHO-5 well-being: before → now" : "WHO-5 well-being: before" }),
+        el("span", { className: "label", textContent: who5.length > 1 ? t("who5BeforeNow") : t("who5Before") }),
         line,
         el("span", { className: "lp-hint", textContent: who5.length > 1
-          ? (Math.abs(diff) >= 10 ? "A change of 10 points or more is meaningful." : "Less than 10 points: not a meaningful change yet.")
-          : "Out of 100. Retake it after 7 days: type WHO-5." })));
+          ? (Math.abs(diff) >= 10 ? t("who5Meaningful") : t("who5NotYet"))
+          : t("who5Retake") })));
     }
+    if (has) kids.push(el("div", { className: "lp-actions" },
+      el("button", { className: "btn ghost", type: "button", textContent: t("savePng"), onclick: () => saveLadderPNG(l, who5) })));
     panel.replaceChildren(...kids);
   }
 
@@ -397,8 +511,9 @@
       }
       store.set("lg_sessions", sessions.slice(0, 50));
       renderSessions();
+      loadImpact();                                  // the anonymous totals may have changed
     } catch (err) {
-      pending.textContent = "Error: " + err.message; // e.g. rate limit, or the model is unavailable
+      pending.textContent = t("error") + err.message; // e.g. rate limit, or the model is unavailable
       pending.classList.add("err");
     } finally {
       $("send").disabled = false;
@@ -416,7 +531,7 @@
   // Draw the sidebar list and enable the download buttons when a chat is open.
   function renderSessions() {
     $("sessions").replaceChildren(...sessions.map((s) => el("li", {},
-      el("button", { className: s.id === sessionId ? "active" : "", textContent: s.title || "New chat", title: s.title, onclick: () => openSession(s.id) }))));
+      el("button", { className: s.id === sessionId ? "active" : "", textContent: s.title || t("newChatTitle"), title: s.title, onclick: () => openSession(s.id) }))));
     $("dl-json").disabled = $("dl-csv").disabled = $("del-chat").disabled = !sessionId;
   }
 
@@ -425,7 +540,7 @@
   async function openSession(id) {
     sessionId = id;
     renderSessions();
-    thread.replaceChildren(el("div", { className: "empty", textContent: "Loading…" }));
+    thread.replaceChildren(el("div", { className: "empty", textContent: t("loading") }));
     try {
       const s = await api("/api/session?id=" + encodeURIComponent(id));
       thread.replaceChildren();
@@ -442,7 +557,7 @@
 
   // "Delete chat": erase the open chat from the server and from this browser's list.
   $("del-chat").addEventListener("click", async () => {
-    if (!sessionId || !confirm("Delete this chat from the server? This cannot be undone.")) return;
+    if (!sessionId || !confirm(t("delConfirm"))) return;
     try { await api("/api/session?id=" + encodeURIComponent(sessionId), { method: "DELETE" }); } catch {}
     sessions = sessions.filter((x) => x.id !== sessionId);
     store.set("lg_sessions", sessions);
@@ -471,9 +586,133 @@
     download(`chat_${s.id.slice(0, 8)}.csv`, toCSV(rows), "text/csv");
   });
 
-  // Start-up: draw the sidebar and the welcome screen.
-  renderSessions();
-  renderEmpty();
+  // ---------------------------------------------------------------------------
+  // G (continued). Apply the language to the fixed texts and redraw.
+  // ---------------------------------------------------------------------------
+  function applyLang(next) {
+    lang = I18N[next] ? next : "en";
+    try { localStorage.setItem(LANG_KEY, lang); } catch {}
+    document.documentElement.lang = lang === "kz" ? "kk" : lang;
+    document.querySelectorAll("[data-i18n]").forEach((n) => { n.textContent = t(n.dataset.i18n); });
+    document.querySelectorAll("[data-i18n-ph]").forEach((n) => { n.placeholder = t(n.dataset.i18nPh); });
+    document.querySelectorAll(".lang button").forEach((b) => { const on = b.dataset.lang === lang; b.classList.toggle("on", on); b.setAttribute("aria-pressed", on); });
+    $("ladder-panel").setAttribute("aria-label", t("yourLadder"));
+    renderSessions();
+    if (thread.querySelector(".empty") || !thread.children.length) renderEmpty();
+    else renderLadder(shownLadder, shownWho5);
+    renderImpact();
+  }
+  document.querySelectorAll(".lang button").forEach((b) => b.addEventListener("click", () => applyLang(b.dataset.lang)));
+
+  // ---------------------------------------------------------------------------
+  // H. The 24-hour reminder (.ics) and the ladder as a picture (PNG). FLOW 12.
+  // ---------------------------------------------------------------------------
+  // Both are made in the browser and downloaded: nothing is sent anywhere, no
+  // sign-up. The reminder has only a general title and this site's address,
+  // never the step text, because calendars often sync to other services.
+  const icsDate = (d) => d.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");
+  const icsText = (s) => s.replace(/\\/g, "\\\\").replace(/[,;]/g, (m) => "\\" + m).replace(/\n/g, "\\n");
+  function downloadReminder(l) {
+    let at = new Date(Date.parse(l.step_ts || "") + 24 * 3_600_000);
+    if (!(at > new Date())) at = new Date(Date.now() + 15 * 60_000); // already past 24 h: in 15 minutes
+    const url = location.origin + "/";
+    const ics = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Ladder Guide//EN", "CALSCALE:GREGORIAN", "METHOD:PUBLISH",
+      "BEGIN:VEVENT", `UID:${crypto.randomUUID()}@ladder-guide`, `DTSTAMP:${icsDate(new Date())}`,
+      `DTSTART:${icsDate(at)}`, `DTEND:${icsDate(new Date(at.getTime() + 15 * 60_000))}`,
+      `SUMMARY:${icsText(t("icsTitle"))}`, `DESCRIPTION:${icsText(t("icsDesc", url))}`, `URL:${url}`,
+      "BEGIN:VALARM", "TRIGGER:PT0M", "ACTION:DISPLAY", `DESCRIPTION:${icsText(t("icsTitle"))}`, "END:VALARM",
+      "END:VEVENT", "END:VCALENDAR"].join("\r\n") + "\r\n";
+    download("ladder-reminder.ics", ics, "text/calendar");
+  }
+
+  // Draws the ladder on a canvas, the same order as the panel: fears, goal,
+  // obstacles (nearest lowest), "I", then the step, steps done and WHO-5.
+  // Light colours on purpose, so the picture prints and shares well.
+  function saveLadderPNG(l, who5 = []) {
+    const W = 1080, P = 72, inner = W - 2 * P, font = 'system-ui, -apple-system, "Segoe UI", sans-serif';
+    const c = document.createElement("canvas"), x = c.getContext("2d");
+    const wrap = (text, size, weight, width) => {
+      x.font = `${weight} ${size}px ${font}`;
+      const lines = []; let line = "";
+      for (const w of String(text).split(/\s+/)) {
+        const tryLine = line ? line + " " + w : w;
+        if (x.measureText(tryLine).width > width && line) { lines.push(line); line = w; } else line = tryLine;
+      }
+      if (line) lines.push(line);
+      return lines;
+    };
+    // Each block: { lines, size, weight, color, bg, border, pad, gap, label, rung, first }
+    const blocks = [];
+    const add = (b) => blocks.push({ size: 30, weight: 400, color: "#1b1f24", pad: 22, gap: 18, ...b });
+    add({ lines: wrap(t("yourLadder"), 52, 700, inner), size: 52, weight: 700, pad: 0, gap: 30 });
+    (l.fears ?? []).forEach((f) => add({ text: t("fear") + f, color: "#8a5a00", bg: "#fdf3dc", size: 28, gap: 10 }));
+    add({ label: t("goal"), text: l.goal || t("notSet"), color: "#fff", bg: "#2f6fde", weight: 600, gap: 26 });
+    const rungs = [...(l.obstacles ?? [])].map((o, i) => ({ text: o, rung: true, first: i === 0, label: i === 0 ? t("nearest") : "", pad: 20, gap: 0 })).reverse();
+    rungs.forEach((r) => add(r));
+    add({ label: t("me"), text: l.me || t("meDefault"), border: "#2f6fde", gap: 30 });
+    if (l.step) add({ label: t("stepLabel"), text: l.step, bg: "#f6f7f9", border: "#dfe3e8" });
+    if (l.done_steps?.length) add({ label: t("stepsDone", l.done_steps.length), text: l.done_steps.map((s) => "✓ " + s).join("\n"), color: "#1d7a46", bg: "#e6f4ec" });
+    if (who5?.length) {
+      const first = who5[0].score, last = who5.at(-1).score, d = last - first;
+      add({ label: who5.length > 1 ? t("who5BeforeNow") : t("who5Before"), text: who5.length > 1 ? `${first} → ${last} (${d > 0 ? "+" : ""}${d})` : String(first), size: 36, weight: 700, bg: "#f6f7f9", border: "#dfe3e8" });
+    }
+    // Measure, then draw.
+    for (const b of blocks) {
+      const tw = inner - 2 * b.pad - (b.rung ? 40 : 0);
+      b.lines ??= String(b.text).split("\n").flatMap((p) => wrap(p, b.size, b.weight, tw));
+      b.labelLines = b.label ? wrap(b.label.toUpperCase(), 20, 700, tw) : [];
+      b.h = b.pad * 2 + b.lines.length * b.size * 1.3 + b.labelLines.length * 28;
+    }
+    const H = P * 2 + blocks.reduce((a, b) => a + b.h + b.gap, 0) + 60;
+    c.width = W; c.height = H;
+    x.fillStyle = "#ffffff"; x.fillRect(0, 0, W, H);
+    let y = P;
+    const rungTop = []; // for the side rails
+    for (const b of blocks) {
+      const bx = b.rung ? P + 20 : P, bw = b.rung ? inner - 40 : inner;
+      if (b.bg || b.first) { x.fillStyle = b.first ? "#e6f4ec" : b.bg; x.beginPath(); x.roundRect(bx, y, bw, b.h, b.rung ? 8 : 16); x.fill(); }
+      if (b.border) { x.strokeStyle = b.border; x.lineWidth = 3; x.beginPath(); x.roundRect(bx, y, bw, b.h, 16); x.stroke(); }
+      if (b.rung) { rungTop.push(y); x.fillStyle = "#b9bfc7"; x.fillRect(P + 4, y + b.h - 6, inner - 8, 8); }
+      let ty = y + b.pad;
+      for (const ln of b.labelLines) { x.font = `700 20px ${font}`; x.fillStyle = b.first ? "#1d7a46" : b.color === "#fff" ? "#e7effc" : "#5f6670"; x.fillText(ln, bx + b.pad, ty + 20); ty += 28; }
+      x.font = `${b.weight} ${b.size}px ${font}`; x.fillStyle = b.color;
+      for (const ln of b.lines) { x.fillText(ln, bx + b.pad, ty + b.size); ty += b.size * 1.3; }
+      y += b.h + b.gap;
+    }
+    if (rungTop.length) { // two rails along the rungs
+      const top = rungTop[0] - 12, bottom = rungTop.at(-1) + blocks.find((b) => b.rung && !blocks[blocks.indexOf(b) + 1]?.rung).h + 12;
+      x.fillStyle = "#9aa0a8"; x.fillRect(P, top, 8, bottom - top); x.fillRect(W - P - 8, top, 8, bottom - top);
+    }
+    x.font = `400 22px ${font}`; x.fillStyle = "#5f6670";
+    x.fillText(`${t("pngFooter")}. ${new Date().toISOString().slice(0, 10)}`, P, H - P + 10);
+    c.toBlob((blob) => {
+      const a = el("a", { href: URL.createObjectURL(blob), download: "my-ladder.png" });
+      a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    }, "image/png");
+  }
+
+  // ---------------------------------------------------------------------------
+  // I. Anonymous impact numbers (FLOW 14): totals only, from GET /api/stats.
+  // ---------------------------------------------------------------------------
+  let impact = null;
+  async function loadImpact() {
+    try { impact = await api("/api/stats"); } catch { impact = null; }
+    renderImpact();
+  }
+  function renderImpact() {
+    const box = $("impact");
+    if (!impact) { box.replaceChildren(); return; }
+    const row = (label, value) => el("div", {}, el("b", { textContent: String(value) }), " ", label);
+    const w = impact.who5_avg_change;
+    box.replaceChildren(
+      el("div", { textContent: t("impactTitle", impact.since) }),
+      ...["chats_started", "goal_named", "step_chosen", "came_back", "steps_done"].map((k) => row(t("impact")[k], impact[k])),
+      row(`${t("impact").who5} (${t("who5People", impact.who5_pairs)})`, w == null ? "–" : (w > 0 ? "+" : "") + w));
+  }
+
+  // Start-up: language, the sidebar, the welcome screen, the impact numbers.
+  applyLang(lang);
+  loadImpact();
 
   // ---------------------------------------------------------------------------
   // F. Test runner (FLOW 7). Same logic as scripts/run-tests.mjs, in the browser.

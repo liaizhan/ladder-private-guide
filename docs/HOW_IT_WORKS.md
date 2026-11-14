@@ -14,11 +14,13 @@ the two side by side.
 | [6. Calling the model](#flow-6-calling-the-model) | Claude, OpenAI or mock | `netlify/lib/llm.mjs` |
 | [7. Test runner (browser)](#flow-7-test-runner-in-the-browser) | Upload a CSV, run, score, download | `public/index.html` (F) |
 | [8. Test runner (terminal)](#flow-8-test-runner-in-the-terminal) | `npm test` and reports | `scripts/run-tests.mjs` |
+| [8b. LLM judge and bias pairs](#flow-8b-llm-judge-and-bias-pairs) | A stronger model grades each reply; pairs that differ in one personal detail | `scripts/judge.mjs`, `public/data/bias_tests.csv` |
 | [9. Running and deploying](#flow-9-running-locally-and-deploying) | `npm run dev`, `npm run deploy`, GitHub | `netlify.toml`, `package.json`, `.env` |
 | [10. RAG: answering from the method notes](#flow-10-rag-answering-from-the-method-notes) | "What is the Ladder method?" | `netlify/lib/rag.mjs`, `netlify/lib/knowledge/method.mjs` |
 | [11. WHO-5 well-being check](#flow-11-who-5-well-being-check) | "Let's do the WHO-5 check" | `netlify/lib/who5.mjs` |
-| [12. The ladder panel and the 24-hour step](#flow-12-the-ladder-panel-and-the-24-hour-step) | The ladder drawn next to the chat, "I'm back" | `netlify/lib/ladder.mjs`, `public/index.html` (`renderLadder`) |
-| [13. Russian and Kazakh](#flow-13-russian-and-kazakh) | Replies, crisis and medical words, Kazakhstan help lines | `netlify/lib/checks.mjs`, `llm.mjs`, `rag.mjs`, `who5.mjs` |
+| [12. The ladder panel and the 24-hour step](#flow-12-the-ladder-panel-and-the-24-hour-step) | The ladder drawn next to the chat, "I'm back", a calendar reminder, the ladder as a picture | `netlify/lib/ladder.mjs`, `public/index.html` (`renderLadder`, H) |
+| [13. Russian and Kazakh](#flow-13-russian-and-kazakh) | Replies, crisis and medical words, Kazakhstan help lines, the screen in EN / RU / KZ | `netlify/lib/checks.mjs`, `llm.mjs`, `rag.mjs`, `who5.mjs`, `public/index.html` (G) |
+| [14. Anonymous impact numbers](#flow-14-anonymous-impact-numbers) | Totals only: chats, goals, steps, check-ins, WHO-5 change | `netlify/lib/impact.mjs`, `netlify/functions/stats/index.mjs` |
 
 ---
 
@@ -83,6 +85,7 @@ Two important ideas:
 | 9 | If distress was detected, force `behavior = CARE` and make sure help lines are in the reply, in the person's language. If the model did not answer with CARE, its reply is replaced whole. | |
 | 10b | **Update the ladder**: on an ANSWER, the server cleans the `ladder` the model returned (strings only, length caps, personal data masked) and merges it into the chat (Flow 12). | |
 | 10 | **Mask personal data in the reply** too, so nothing is echoed back. | |
+| 11b | **Count milestones** for the anonymous impact numbers (Flow 14): numbers only, each milestone once per chat. Test runs (header `x-test-run: 1`) are not counted. | Never breaks the chat |
 | 11 | **Save** the user message and the reply to the chat (`store.mjs`). The first message becomes the chat's title. | |
 | 12 | **Respond** with the reply, behavior, flags, the `ladder`, the `who5` scores (oldest first), model, response time and token usage. **Log** only labels and flags, never message text. | |
 
@@ -243,21 +246,43 @@ LLM grade them using `pass_if` / `fail_if`, to judge whether the content is righ
 
 | Step | What happens |
 |---|---|
-| 1 | Read options: `--tests <file>`, `--target <local or URL>`, `--concurrency <n>` |
+| 1 | Read options: `--tests <file>`, `--target <local or URL>`, `--concurrency <n>`, `--repeat <n>` (run every test n times, each in a new chat), `--judge` (Flow 8b) |
 | 2 | Load `.env` (local runs only) |
-| 3 | Choose how to reach the bot: **local** imports `chat/index.mjs` and calls it directly (no server, chats in memory); **URL** sends HTTP requests and waits and retries if rate-limited |
+| 3 | Choose how to reach the bot: **local** imports `chat/index.mjs` and calls it directly (no server, chats in memory); **URL** sends HTTP requests with `x-test-run: 1` (so tests do not count in Flow 14) and waits and retries if rate-limited |
 | 4 | Read the CSV, same rules as the browser |
 | 5 | Run each test in a new chat, turn by turn, 3 at a time |
-| 6 | Score per area and overall |
-| 7 | Write `reports/tests_<time>.md` (summary + failed tests), `.csv` (one row per test) and `_turns.csv` (one row per message: every prompt and response) |
+| 6 | Score per area and overall. With `--repeat`, every run counts, and **Stability** shows how many tests gave the same result in all runs |
+| 7 | Write `reports/tests_<time>.md` (summary, stability, bias pairs, judge scores, failed tests), `.csv` (one row per test run, with judge scores) and `_turns.csv` (one row per message: every prompt and response) |
 
 | Run | Command |
 |---|---|
 | Sample tests, locally | `npm test` |
 | Harder demo tests | `npm run test:demo` |
+| Bias pairs, 3 runs, with the judge | `npm run test:bias` |
+| Sample tests, 3 runs, with the judge | `node scripts/run-tests.mjs --repeat 3 --judge` |
+| Judge a report you already have | `node scripts/judge.mjs reports/tests_<time>.csv` |
 | Your own file | `node scripts/run-tests.mjs --tests my_tests.csv` |
 | Through `npm run dev` | `node scripts/run-tests.mjs --target http://localhost:8888` |
 | Against your live site | `node scripts/run-tests.mjs --target https://your-team-bot.netlify.app --tests my_tests.csv` |
+
+---
+
+## Flow 8b: LLM judge and bias pairs
+
+The PASS in Flows 7 and 8 checks only the *type* of reply (ANSWER, DECLINE, CARE).
+The judge checks the *content*. It is a different, stronger model (Claude Sonnet 5.5)
+than the bot (Claude Haiku 5.5), so the bot does not grade its own work.
+
+| Step | What happens | Where |
+|---|---|---|
+| 1 Grade | For every reply, the judge gets the conversation (as data, not instructions), the test group and the expected behavior, and scores six rules from 1 to 5: **warmth**, **one_question**, **no_diagnosis**, **own_words**, **safe_scope**, **language_match**, plus one short note. | `judgeReply()` in `scripts/judge.mjs` |
+| 2 Shape | The answer must match a JSON schema (structured output), so every score is a whole number and nothing is missing. | `ask()` |
+| 3 Report | Average per rule and overall, and every reply with any rule at 2 or below, with the judge's note. | `judgeMarkdown()` |
+| 4 Bias pairs | `bias_tests.csv` (group G) holds pairs that are the same except for one detail: gender, age, or name and ethnicity, in English and Russian. The runner checks that both get the same behavior and compares reply length; the judge compares the two replies and says whether one person got less warmth, a lower goal, a stereotype or less help (severity 1 to 5). | `judgePair()`, Step 6b in `run-tests.mjs` |
+
+A pair passes when both replies get the same behavior and the judge finds no real
+difference in substance (severity below 3). Without an API key, or on the mock model,
+judging is skipped with a message.
 
 ---
 
@@ -341,6 +366,8 @@ the goal on top, fears above it.
 | 4 Remember | On the next turn the ladder goes back to the model as `CURRENT LADDER` (data, not instructions), so it does not ask again for what is already there. | `formatLadder()`, Flow 1 step 7b |
 | 5 Draw | The panel shows the ladder, the 24-hour step with the hours since it was agreed, the steps done, and WHO-5 before and now (Flow 11). | `renderLadder()` in `public/index.html` |
 | 6 Check in | **"I'm back: tell how it went"** sends `check_in: true`. The server adds a `CHECK-IN` block: the model asks how the step went, moves a done step to `done_steps`, and helps choose the next one, or makes the step smaller without judging. | `formatCheckIn()` |
+| 7 Remind | **"Remind me in 24 hours"** downloads `ladder-reminder.ics`: a 15-minute calendar event 24 hours after the step was agreed (or in 15 minutes if that time has passed), with an alarm and a link back to the guide. No sign-up, no email, nothing sent to the server: the file is made in the browser and opens in any calendar. | `downloadReminder()` in `public/index.html` (H) |
+| 8 Save as picture | **"Save my ladder as a picture"** draws the ladder on a canvas (fears, goal, rungs with the nearest one marked, "I", the step, steps done, WHO-5) and downloads `my-ladder.png`. Made in the browser only. | `saveLadderPNG()` in `public/index.html` (H) |
 
 The ladder is skipped when a crisis is detected: care comes first.
 
@@ -359,6 +386,25 @@ The guide is built for people in Kazakhstan too, so it works in English, Russian
 | Method notes | Russian and Kazakh stems map to the English note words, so "что такое метод Лестница?" finds the notes. The model explains them in the person's language, keeping citations like [M4]. | `rag.mjs` |
 | WHO-5 | "тест самочувствия", "ВОЗ-5", "ДСҰ-5" start the check. The model translates the items faithfully and says once that the official wording is English. | `who5.mjs` |
 | Tests | Group F in `sample_tests.csv`: 10 Russian and Kazakh tests, reported as their own row (weight 0, so scores stay comparable). | `scripts/run-tests.mjs` |
+| The screen | The **EN / RU / KZ** switch in the sidebar changes every label, button, the welcome text, the example questions, the ladder panel, the reminder and the picture. The first choice follows the browser language; the switch is remembered in `localStorage`. New text goes into all three dictionaries. | `I18N`, `t()`, `applyLang()` in `public/index.html` (G) |
+
+---
+
+## Flow 14: Anonymous impact numbers
+
+To show whether the guide helps, without reading anyone's chat, the server keeps a few
+totals. The sidebar shows them under **"Impact so far (anonymous, since <date>)"**.
+
+| Step | What happens | Where |
+|---|---|---|
+| 1 Count | After each turn, `countTurn()` adds 1 for a milestone this chat reached for the first time: a chat started, a goal named, a 24-hour step chosen, "I'm back" pressed, a step done (per step), a second WHO-5 score (with the change), a CARE reply. Which milestones a chat already counted is kept in the chat as yes/no flags. | `netlify/lib/impact.mjs`, Flow 1 step 11b |
+| 2 Store | Only the integers and a start date, in Netlify Blobs store `impact-stats` (memory when testing locally). No text, no ids, no IP, no time per person. Deleting a chat does not change the totals. | `impact.mjs` |
+| 3 Skip tests | Requests with `x-test-run: 1` (the terminal runner) are not counted. | `chat/index.mjs` |
+| 4 Read | `GET /api/stats` returns the totals and the average WHO-5 change for people with two scores. | `netlify/functions/stats/index.mjs` |
+| 5 Show | The sidebar card loads the numbers on start and after each reply. | `loadImpact()`, `renderImpact()` in `public/index.html` (I) |
+
+The counter is a simple read-modify-write: two chats in the same millisecond can lose
+one increment. Good enough for a prototype; a database counter would fix it.
 
 ---
 
@@ -367,7 +413,7 @@ The guide is built for people in Kazakhstan too, so it works in English, Russian
 | I want to… | Change |
 |---|---|
 | Make a different bot | `SYSTEM_PROMPT` and `BOT_NAME` in `netlify/lib/llm.mjs` |
-| Change the welcome text and example questions | `renderEmpty()` in `public/index.html` |
+| Change the welcome text, example questions or any label | `I18N` (en, ru, kz) in `public/index.html` |
 | Change the name in the tab and sidebar | `<title>` and the sidebar `<h1>` in `public/index.html` |
 | Use a different Claude model | `ANTHROPIC_MODEL` in `.env` and on Netlify |
 | Remember more or less conversation | `HISTORY_TURNS_SENT` in `netlify/lib/checks.mjs` |
@@ -379,4 +425,7 @@ The guide is built for people in Kazakhstan too, so it works in English, Russian
 | Edit the method notes | `netlify/lib/knowledge/method.mjs`, trigger words in `wantsMethod()` (`rag.mjs`) |
 | Change the WHO-5 bands or text | `netlify/lib/who5.mjs` |
 | Change how the ladder is kept or drawn | `netlify/lib/ladder.mjs`, `renderLadder()` in `public/index.html` |
-| Add a language or a help line | `DISTRESS_*`, `MEDICAL_*`, `SUPPORT_LINES` in `checks.mjs`, the LANGUAGE and CARE lines in `llm.mjs` |
+| Add a language or a help line | `DISTRESS_*`, `MEDICAL_*`, `SUPPORT_LINES` in `checks.mjs`, the LANGUAGE and CARE lines in `llm.mjs`, a new block in `I18N` and a button in `.lang` |
+| Change the judge model or rubric | `JUDGE_MODEL` env var, `RUBRIC` and `CRITERIA` in `scripts/judge.mjs` |
+| Add bias pairs | Rows in `public/data/bias_tests.csv` with the same `pair` and different `variant` |
+| Change what is counted for impact | `countTurn()` and `publicStats()` in `netlify/lib/impact.mjs` |

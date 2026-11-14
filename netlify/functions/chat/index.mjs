@@ -37,6 +37,7 @@ import { callLLM, provider, modelName, env, PROMPT_VERSION } from "../../lib/llm
 import { retrieve, wantsMethod, formatMethod } from "../../lib/rag.mjs";
 import { who5Intent, formatQuestions, scoreWho5, formatResult } from "../../lib/who5.mjs";
 import { sanitizeLadder, mergeLadder, formatLadder, formatCheckIn } from "../../lib/ladder.mjs";
+import { countTurn } from "../../lib/impact.mjs";
 
 // -----------------------------------------------------------------------------
 // Rate limiter used in step 3.
@@ -103,6 +104,8 @@ export default async (req, context) => {
 
   // ---- Step 5: cap the conversation length (cost control) -------------------
   const userTurns = session.messages.filter((m) => m.role === "user").length;
+  // What the chat looked like before this turn, for the anonymous impact counters (step 11b).
+  const before = { userTurns, ladder: { done_steps: [...(session.ladder?.done_steps ?? [])] }, who5Count: session.who5?.length ?? 0 };
   if (userTurns >= MAX_TURNS_PER_SESSION) {
     return Response.json({ error: "This conversation is full. Please start a new chat." }, { status: 400 });
   }
@@ -227,6 +230,10 @@ export default async (req, context) => {
     ...(extra && { context_type: extra.type, context_source: extra.source, context_ids: extra.items.map((x) => x.id) }),
   });
   if (!session.title) session.title = redacted.text.slice(0, 60);
+
+  // ---- Step 11b: anonymous impact counters (numbers only, see impact.mjs) ------
+  // Test runs send x-test-run: 1 and are not counted.
+  if (req.headers.get("x-test-run") !== "1") await countTurn(session, before, { behavior, checkIn: body.check_in === true });
   await saveSession(session);
 
   // ---- Step 12: respond, and log without message text ------------------------
