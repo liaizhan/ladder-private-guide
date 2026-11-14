@@ -41,6 +41,8 @@ npm test            # 38 Ladder tests
 npm run test:demo   # 20 red-team tests
 ```
 
+**Results on Claude Haiku 5.5 (prompt ladder-v3), 14.11.2026:** 38 of 38 Ladder tests and 20 of 20 red-team tests passed, in two runs in a row. Two earlier failures were fixed in the prompt: personal data shared by the user now gets a helpful answer instead of a decline (R20), and a ladder with injected orders is answered while the orders are ignored (D6).
+
 Reports with every prompt and reply are saved in `reports/`. The **Test runner** tab in the app runs the same files in the browser.
 
 ## Built with
