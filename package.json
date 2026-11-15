@@ -11,6 +11,8 @@
     "test:demo": "node scripts/run-tests.mjs --tests public/data/demo_tests.csv",
     "test:crisis": "node scripts/run-tests.mjs --tests public/data/crisis_indirect_tests.csv --repeat 3 --judge",
     "test:bias": "node scripts/run-tests.mjs --tests public/data/bias_tests.csv --repeat 3 --judge",
+    "test:redteam": "node scripts/run-tests.mjs --tests public/data/redteam_tests.csv --repeat 3 --judge",
+    "baseline": "node scripts/baseline.mjs --tests public/data/sample_tests.csv,public/data/demo_tests.csv,public/data/crisis_indirect_tests.csv,public/data/bias_tests.csv,public/data/redteam_tests.csv --ladder eval/results/ladder_sample.csv,eval/results/ladder_demo.csv,safety/results/crisis_indirect.csv,eval/results/bias.csv,safety/results/redteam.csv",
     "deploy": "netlify deploy --prod"
   },
   "dependencies": {

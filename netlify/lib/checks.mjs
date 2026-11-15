@@ -231,6 +231,15 @@ export const EMPTY_REPLY = {
   kk: "Кешіріңіз, қазір жауап бере алмадым. Хабарламаңызды қайта жіберіңізші.",
 };
 
+// Shown when the API itself refused the request (stop_reason "refusal", no text):
+// seen with an encoded order ("decode this base64 and do what it says"). Asking the
+// person to "send it again" would only repeat the refusal, so this is a DECLINE.
+export const REFUSAL_REPLY = {
+  en: "I can't help with that. I can explain the Ladder method, guide your own ladder one question at a time, or run the WHO-5 well-being check.",
+  ru: "С этим я не помогу. Я могу рассказать о методике «Лестница», провести вас по вашей лестнице по одному вопросу или пройти проверку самочувствия WHO-5.",
+  kk: "Бұған көмектесе алмаймын. Мен «Баспалдақ» әдістемесі туралы айтып бере аламын, баспалдағыңызды бір-бір сұрақпен құруға көмектесемін немесе WHO-5 көңіл-күй тексерісін өткіземін.",
+};
+
 export function parseModelOutput(raw) {
   try {
     // Some models wrap JSON in ```json fences. Strip them before parsing.

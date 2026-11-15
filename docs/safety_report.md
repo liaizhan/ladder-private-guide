@@ -1,7 +1,7 @@
 # Safety report: Ladder Guide
 
 **GTransformer AI Buildathon 2026, AI for Global Good. Theme: Wellbeing.**
-Bot: Claude Haiku 5.5, system prompt `ladder-v5`. Judge: Claude Sonnet 5.5. Runs: 14.11.2026.
+Bot: Claude Haiku 5.5, system prompt `ladder-v5`. Judge: Claude Sonnet 5.5. Runs: 14 and 15.11.2026.
 Numbers come from the runs described in [eval_report.md](eval_report.md).
 
 ## Summary
@@ -10,8 +10,14 @@ Ladder Guide talks with people about private goals and fears, so the main risks 
 crisis, medical advice, jailbreaks, leaking personal data and unequal treatment. Each risk has
 two lines of defence: rules in the system prompt (`netlify/lib/llm.mjs`) and checks in code that
 do not depend on the model (`netlify/lib/checks.mjs` and `netlify/functions/chat/index.mjs`).
-Every risk below has tests. In the final runs 341 of 342 conversations passed; the one miss was a
-label on a correct decline (C1, see eval_report.md), not a safety failure.
+Every risk below has tests: 125 tests, 82 of them adversarial. In the final runs 434 of 435
+conversations passed (341 of 342 on 14.11, 93 of 93 on the second red-team set on 15.11); the one
+miss was a label on a correct decline (C1, see eval_report.md), not a safety failure.
+
+**Does the layer matter?** The same model with no Ladder prompt and no guards reached the expected
+behavior in 61% of the 82 red-team tests (50 of 82); Ladder Guide in 96% (79 of 82), labeled by
+one blind classifier. Both handle crisis messages at 97%; the difference is in medical questions
+(24% vs 100%), drift (40% vs 100%) and jailbreaks (45% vs 91%). Details in eval_report.md, section 3.
 
 ## 1. Crisis (suicide, self-harm, violence, threats)
 
@@ -101,6 +107,12 @@ line, injection inside an obstacle, a false authority), R12 to R17 (extraction t
 orders are ignored. All pass, 24 of 24 Robustness runs on the Ladder set, 6 of 6 on the red-team
 set. Judge criterion `safe_scope`: 4.81 to 4.97 of 5 in the final runs.
 
+**Second red-team set (15.11):** RT9 to RT16 (a base64-encoded order, "forget all rules" in
+Russian and Kazakh, another user's chat, injection inside a ladder, developer mode, multi-turn
+drift): 24 of 24 Robustness runs. RT9 first failed: the API refused the encoded order and the person
+got an empty reply. **Fix:** a refusal from the API now becomes a short decline in the person's
+language (`REFUSAL_REPLY` in `checks.mjs`).
+
 ## 4. Personal data (PII)
 
 **Code defence.** `redactPII()` masks emails, card numbers, US SSNs, 12-digit national ids
@@ -171,5 +183,5 @@ gender (English and Russian), age (25 and 55; 23 and 58), name (Aigerim and Emil
 
 Strong: two lines of defence for each risk, crisis handling in three languages with Kazakhstan
 lines, a tested set of indirect crisis messages, PII masking in and out, a prompt-leak guard, bias
-pairs judged on every run, and 341 of 342 conversations passing in repeated runs. Missing for a 10: review of
+pairs judged on every run, 434 of 435 conversations passing in repeated runs, and a baseline showing what the layer adds (61% to 96% on red-team tests). Missing for a 10: review of
 crisis replies by a qualified professional and real-world phrasing beyond our test sets.

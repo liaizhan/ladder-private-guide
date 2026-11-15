@@ -30,7 +30,7 @@
 
 import { loadSession, saveSession, newSession, isValidId, storageKind } from "../../lib/store.mjs";
 import {
-  validateMessage, redactPII, looksLikeInjection, showsDistress, mentionsMedical, parseModelOutput, EMPTY_REPLY, langOf,
+  validateMessage, redactPII, looksLikeInjection, showsDistress, mentionsMedical, parseModelOutput, EMPTY_REPLY, REFUSAL_REPLY, langOf,
   leaksPrompt, LEAK_REPLACEMENT, supportLineFor, MAX_TURNS_PER_SESSION, HISTORY_TURNS_SENT,
 } from "../../lib/checks.mjs";
 import { callLLM, provider, modelName, env, PROMPT_VERSION } from "../../lib/llm.mjs";
@@ -192,6 +192,11 @@ export default async (req, context) => {
     // Cut off: nothing usable, or the token limit stopped the reply mid-word
     // (seen in Kazakh crisis replies, where the model thinks longer before answering).
     const cutOff = () => parsed.empty || (!parsed.ok && llm.stop === "max_tokens");
+    // The API refused with no text (an encoded order, for example): a retry gets the same
+    // refusal, so decline in the person's language instead of asking them to send it again.
+    if (parsed.empty && llm.stop === "refusal") {
+      parsed = { ok: false, behavior: "DECLINE", reply: REFUSAL_REPLY[langOf(input.text)] ?? REFUSAL_REPLY.en, ladder: null };
+    }
     if (cutOff()) { // try once more, then fall back
       llm = await callLLM(history);
       usage = { input_tokens: usage.input_tokens + llm.usage.input_tokens, output_tokens: usage.output_tokens + llm.usage.output_tokens };
