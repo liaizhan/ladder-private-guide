@@ -4,7 +4,7 @@
 
 **Live demo:** https://ladder-guide.netlify.app (no account needed; English, Russian, Kazakh).
 
-**Demo video (1 min 52 s):** [docs/demo.mp4](docs/demo.mp4). **Pitch:** [docs/pitch.pdf](docs/pitch.pdf).
+**Demo video (1 min 30 s):** [docs/demo.mp4](docs/demo.mp4). **Pitch:** [docs/pitch.pdf](docs/pitch.pdf).
 
 Ladder Guide helps an adult see the inner obstacles between them and one goal, and choose one small step for the next 24 hours. It is built on the Ladder method by Aizhan Li, author of the Ladder method (created in 2019). It is an AI self-reflection tool. It is not therapy, not a psychologist and not medical advice.
 
